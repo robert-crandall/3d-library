@@ -50,8 +50,8 @@ func (in *uploadInput) Resolve(ctx huma.Context) []error {
 func multipartReader(ctx huma.Context) (*multipart.Reader, []error) {
 	r, _ := humachi.Unwrap(ctx)
 
-	_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil {
+	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/form-data" {
 		return nil, []error{&huma.ErrorDetail{
 			Location: "header.Content-Type",
 			Message:  "expected multipart/form-data",

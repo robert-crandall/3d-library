@@ -522,6 +522,32 @@ func TestNonFilePartsAreRejected(t *testing.T) {
 	}
 }
 
+// The boundary parameter is not what makes a body multipart. Reading the media
+// type and not just the parameters is the difference between rejecting a
+// mislabelled body up front and handing it to a parser that will find no parts
+// and say something less useful.
+func TestUploadRefusesANonMultipartContentType(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	dir := t.TempDir()
+	ts := newTestServer(t, pool, library.Options{Dir: dir})
+	c := signIn(t, ts, "mislabelled@example.com")
+
+	contentType, body := filePart(t, "a.stl", "solid")
+	_, boundary, _ := strings.Cut(contentType, "boundary=")
+
+	resp, out := c.post("Mislabelled", "text/plain; boundary="+boundary, body)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("got %d, want 422: %s", resp.StatusCode, out)
+	}
+	if !strings.Contains(out, "multipart/form-data") {
+		t.Errorf("the error does not say what was expected: %s", out)
+	}
+	if final, temp := blobs(t, dir); len(final) != 0 || len(temp) != 0 {
+		t.Errorf("wrote files anyway: final=%v temp=%v", final, temp)
+	}
+}
+
 // A multi-file upload that fails partway keeps what already committed and
 // leaves no trace of what failed. Because one request carries one file, the
 // files that already succeeded are real committed rows and it would be wrong to

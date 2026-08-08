@@ -130,7 +130,7 @@ jobs:
       - name: Run database-backed integration tests
         run: go test ./... -v
         env:
-          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/3d-library_test?sslmode=disable
   # The image the homelab pulls. linux/amd64 only - that is what the homelab
   # runs. Kept explicit rather than left to default to the runner's own
   # architecture, so what gets built here doesn't quietly follow a runner label
