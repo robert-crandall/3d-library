@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LibraryError from '$lib/components/LibraryError.svelte';
   import TaxonomySection from '$lib/components/TaxonomySection.svelte';
   import { library } from '$lib/library.svelte';
 
@@ -27,6 +28,8 @@
       deletes is permanent.
     </p>
   </header>
+
+  <LibraryError class="mt-6" />
 
   <div class="mt-6 flex flex-col gap-5">
     <TaxonomySection

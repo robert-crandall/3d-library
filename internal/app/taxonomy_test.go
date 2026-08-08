@@ -854,91 +854,145 @@ func TestTaxonomyNamesAreRefusedWhenEmpty(t *testing.T) {
 // it too, and a third copy that drifts is worse than a constant.
 const maxTaxonomyNameLen = 60
 
-// A tag can be deleted while a save that names it is in flight, and the two
-// steps of that save - reading the tag and writing the join row - do not hold
-// the tag still between them. The insert's SELECT takes no lock, and the
-// key-share lock the foreign key wants is taken after it, so a delete that
-// commits in that gap turns the write into a 23503 rather than into the
-// row-count mismatch the same-tag-deleted-earlier case produces.
+// A label deleted while the save is mid-flight is refused, not a 500.
+//
+// The row-count check that catches an already-deleted label cannot catch this
+// one. Neither the join insert's source read nor setCategory's existence check
+// takes a lock, and the key-share lock the foreign key wants is taken after it
+// at constraint-check time, so a delete that commits in that gap raises 23503
+// before the count is ever compared. Both write paths therefore map it.
 //
 // The interleaving is forced rather than hoped for: the delete is held open in
-// its own transaction until the save is demonstrably blocked on it. Without the
-// mapping this is a 500 with a Postgres constraint name in it.
-func TestSavingAModelWhoseTagIsDeletedMidSave(t *testing.T) {
-	dbURL := testDatabase(t)
-	pool := testPool(t, dbURL)
-	ts := newTestServer(t, pool, library.Options{Dir: t.TempDir()})
-	c := signIn(t, ts, "midsave@example.com")
+// its own transaction until the save is demonstrably parked on its lock, and
+// the wait asks Postgres who is blocking whom rather than matching on query
+// text alone, so this is a statement about these two statements and not about
+// whatever else happened to be running. Without the mapping each case is a 500
+// with a Postgres constraint name in it.
+func TestSavingAModelWhoseLabelIsDeletedMidSave(t *testing.T) {
+	for _, tc := range []struct {
+		what    string
+		path    string
+		create  string
+		table   string
+		assign  func(id int64) string
+		blocked string
+		refusal string
+	}{
+		{
+			what:    "tag",
+			path:    "/api/tags",
+			create:  `{"name":"doomed"}`,
+			table:   "tags",
+			assign:  func(id int64) string { return assign("Clip", nil, []int64{id}, nil) },
+			blocked: "model_tags",
+			refusal: "unknown tag",
+		},
+		{
+			what:    "material",
+			path:    "/api/materials",
+			create:  `{"name":"doomed"}`,
+			table:   "materials",
+			assign:  func(id int64) string { return assign("Clip", nil, nil, []int64{id}) },
+			blocked: "model_materials",
+			refusal: "unknown material",
+		},
+		{
+			what:    "category",
+			path:    "/api/categories",
+			create:  `{"name":"doomed","color":"#3b82f6"}`,
+			table:   "categories",
+			assign:  func(id int64) string { return assign("Clip", &id, nil, nil) },
+			blocked: "category_id",
+			refusal: "unknown category",
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			dbURL := testDatabase(t)
+			pool := testPool(t, dbURL)
+			ts := newTestServer(t, pool, library.Options{Dir: t.TempDir()})
+			c := signIn(t, ts, "midsave-"+tc.what+"@example.com")
 
-	model := uploadModel(c, "Clip")
-	path := fmt.Sprintf("/api/models/%d", model.ID)
-	doomed := decodeLabel(t, mustCreate(t, c, "/api/tags", `{"name":"doomed"}`))
+			model := uploadModel(c, "Clip")
+			path := fmt.Sprintf("/api/models/%d", model.ID)
+			doomed := decodeLabel(t, mustCreate(t, c, tc.path, tc.create))
 
-	ctx := context.Background()
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `DELETE FROM tags WHERE id = $1`, doomed.ID); err != nil {
-		t.Fatalf("delete the tag: %v", err)
-	}
+			ctx := context.Background()
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatalf("begin: %v", err)
+			}
+			defer tx.Rollback(ctx)
+			var holder int32
+			if err := tx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&holder); err != nil {
+				t.Fatalf("backend pid: %v", err)
+			}
+			if _, err := tx.Exec(ctx,
+				"DELETE FROM "+tc.table+" WHERE id = $1", doomed.ID); err != nil {
+				t.Fatalf("delete the %s: %v", tc.what, err)
+			}
 
-	done := make(chan struct{})
-	var (
-		code int
-		body string
-	)
-	go func() {
-		defer close(done)
-		var resp *http.Response
-		resp, body = c.send(http.MethodPut, path,
-			assign("Clip", nil, []int64{doomed.ID}, nil))
-		code = resp.StatusCode
-	}()
+			type result struct {
+				code int
+				body string
+			}
+			done := make(chan result, 1)
+			go func() {
+				resp, body := c.send(http.MethodPut, path, tc.assign(doomed.ID))
+				done <- result{resp.StatusCode, body}
+			}()
 
-	// Wait for the save to be waiting on the delete's lock. Polling the server's
-	// own view of who is blocked is the only way to know the save has already
-	// read the tag; a sleep would leave the test asserting whichever ordering
-	// the machine felt like that run.
-	waitForLockWaiter(t, pool, "model_tags")
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit the delete: %v", err)
-	}
-	<-done
+			waitForBlockedOn(t, pool, holder, tc.blocked)
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatalf("commit the delete: %v", err)
+			}
 
-	if code != http.StatusUnprocessableEntity {
-		t.Fatalf("got %d, want 422: %s", code, body)
-	}
-	if !strings.Contains(body, "unknown tag") {
-		t.Errorf("the refusal does not name what went wrong: %s", body)
-	}
-	// And nothing half-applied: the whole save rolled back with the tag.
-	if got := decodeModel(t, mustGet(t, c, path)); got.Name != "Clip" || len(got.Tags) != 0 {
-		t.Errorf("the refused save left something behind: %+v", got)
+			// A timed receive, because c.send reports failures with t.Fatalf and
+			// that ends only this goroutine when it runs off the test's own.
+			var got result
+			select {
+			case got = <-done:
+			case <-time.After(30 * time.Second):
+				t.Fatal("the save never returned; c.send gave up inside the goroutine")
+			}
+
+			if got.code != http.StatusUnprocessableEntity {
+				t.Fatalf("got %d, want 422: %s", got.code, got.body)
+			}
+			if !strings.Contains(got.body, tc.refusal) {
+				t.Errorf("the refusal does not name what went wrong: %s", got.body)
+			}
+			// And nothing half-applied: the whole save rolled back with the label.
+			after := decodeModel(t, mustGet(t, c, path))
+			if after.Name != "Clip" || len(after.Tags) != 0 || len(after.Materials) != 0 ||
+				after.Category != nil {
+				t.Errorf("the refused save left something behind: %+v", after)
+			}
+		})
 	}
 }
 
-// waitForLockWaiter blocks until some backend is waiting on a lock while running
-// a statement mentioning needle.
-func waitForLockWaiter(t *testing.T, pool *pgxpool.Pool, needle string) {
+// waitForBlockedOn blocks until some backend is waiting on a lock held by
+// holder while running a statement mentioning needle.
+func waitForBlockedOn(t *testing.T, pool *pgxpool.Pool, holder int32, needle string) {
 	t.Helper()
 	ctx := context.Background()
 	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		var waiting bool
+	for {
+		var blocked int
 		err := pool.QueryRow(ctx,
-			`SELECT EXISTS (SELECT 1 FROM pg_stat_activity
-			                 WHERE wait_event_type = 'Lock'
-			                   AND query ILIKE '%' || $1 || '%'
-			                   AND pid <> pg_backend_pid())`, needle).Scan(&waiting)
+			`SELECT count(*) FROM pg_stat_activity
+			  WHERE wait_event_type = 'Lock'
+			    AND $1 = ANY(pg_blocking_pids(pid))
+			    AND query ILIKE '%' || $2 || '%'`, holder, needle).Scan(&blocked)
 		if err != nil {
 			t.Fatalf("look for a blocked backend: %v", err)
 		}
-		if waiting {
+		if blocked > 0 {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		if time.Now().After(deadline) {
+			t.Fatal("nothing ever blocked on the delete: the save did not reach the foreign key check")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatal("nothing ever blocked on the tag: the save did not reach the foreign key check")
 }

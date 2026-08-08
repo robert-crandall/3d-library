@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LibraryError from './LibraryError.svelte';
   import { page } from '$app/state';
   import SignOutButton from '$lib/components/SignOutButton.svelte';
   import ThemeToggle from '$lib/components/ThemeToggle.svelte';
@@ -72,9 +73,7 @@
       </a>
     </nav>
 
-    {#if library.error}
-      <p role="alert" class="px-3 text-sm text-danger">{library.error}</p>
-    {/if}
+    <LibraryError class="px-3" />
 
     {#if library.categories.length > 0}
       <nav aria-label="Categories">

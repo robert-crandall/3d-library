@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 // A URL, not a store: the sidebar reads page.url.searchParams and nothing else,
@@ -144,6 +144,38 @@ describe('LibrarySidebar', () => {
     expect(screen.getByRole('alert').textContent).toContain('Could not reach the server');
     expect(screen.getByRole('link', { name: /Functional/ })).toBeTruthy();
     get.mockImplementation((..._args: unknown[]) => Promise.resolve({ data: [] as unknown }));
+    library.reset();
+  });
+
+  // The sequence that makes keeping a stale list safe. Deleting a category
+  // succeeds, the refresh behind it fails, and the sidebar is now showing a
+  // category the server no longer has. Nothing else on the screen re-reads the
+  // taxonomy, so without the retry that wrong list is what the user has until
+  // they reload the page. A weaker test that only asserted the alert would
+  // pass with a button that does nothing.
+  it('recovers a stale list through the retry beside the failure', async () => {
+    url = new URL('http://localhost/');
+    library.reset();
+    get.mockImplementation((path: unknown) =>
+      Promise.resolve(
+        String(path) === '/api/categories'
+          ? { data: [{ id: 3, name: 'Functional', color: '#3b82f6', modelCount: 12 }] }
+          : { data: [] }
+      )
+    );
+    await library.refresh();
+
+    // The delete landed; only the read behind it did not.
+    get.mockImplementation((..._args: unknown[]) => Promise.reject(new TypeError('Failed to fetch')));
+    await library.refresh();
+    render(LibrarySidebar);
+    expect(screen.getByRole('link', { name: /Functional/ })).toBeTruthy();
+
+    get.mockImplementation((..._args: unknown[]) => Promise.resolve({ data: [] as unknown }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    await waitFor(() => expect(screen.queryByRole('link', { name: /Functional/ })).toBeNull());
+    expect(screen.queryByRole('alert')).toBeNull();
     library.reset();
   });
 

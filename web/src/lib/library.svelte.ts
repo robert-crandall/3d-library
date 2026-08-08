@@ -95,9 +95,13 @@ class Library {
    * The two failures are not the same. Nothing has been read yet: there is
    * nothing to keep, and the sidebar showing categories it never loaded would
    * be an invention. Something has: the lists were right one action ago, and
-   * emptying them because a refresh blipped would take a working sidebar away
-   * over a request the user did not make and cannot retry - the error stays on
-   * screen either way, so nothing is being hidden by keeping them.
+   * emptying them would take a working sidebar away over one blipped request.
+   *
+   * What makes keeping them safe is that the failure is never silent and never
+   * final. Most refreshes follow a save, so the kept list can be wrong in the
+   * one way that matters - a deleted row still on screen, a created one still
+   * missing - and LibraryError puts the message and a Try again button on both
+   * screens that render any of this.
    */
   #fail(message: string) {
     if (!this.loaded) {
