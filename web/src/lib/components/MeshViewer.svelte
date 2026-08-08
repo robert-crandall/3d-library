@@ -35,9 +35,20 @@
   // structure, where an STL is a bag of triangles everyone agrees to read as
   // millimetres, so it is the better of the two to open on. Without this the default is
   // whichever the server lists first, which is upload order wearing a disguise.
+  function openable(candidates: ModelFile[]) {
+    return (
+      candidates.find((file) => file.type === '3mf') ??
+      candidates.find((file) => previewable(file.type))
+    );
+  }
+
+  // Size first, though: opening on a file we already know we will refuse, while a mesh
+  // we could draw sits next to it in the strip, shows "too large" to someone whose model
+  // previews fine. A 3MF project file carrying every plate can pass 100 MB where the STL
+  // export of one part does not, which is the pair that reaches this. When everything is
+  // over the cap there is nothing better to pick, so the refusal is still what shows.
   const openOn = $derived(
-    files.find((file) => file.type === '3mf') ??
-      files.find((file) => previewable(file.type)),
+    openable(files.filter((file) => file.size <= MAX_PREVIEW_BYTES)) ?? openable(files),
   );
 
   let selectedId = $state<number>();
@@ -214,7 +225,7 @@
         {#if status === 'loading'}
           <p class="text-sm text-muted">Loading preview…</p>
         {:else if status === 'unsupported'}
-          <p class="max-w-md text-sm text-muted">
+          <p role="status" class="max-w-md text-sm text-muted">
             There is no 3D preview for {selected?.filename}. The viewer shows STL and 3MF
             meshes; download it to open it in something that reads this.
           </p>

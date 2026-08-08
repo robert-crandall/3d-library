@@ -178,6 +178,58 @@ describe('MeshViewer', () => {
     expect(screen.queryByTestId('mesh-readout')).toBeNull();
   });
 
+  it('does not open on a mesh it would refuse when a smaller one is there', async () => {
+    // A 3MF project file carrying every plate can pass the cap where the STL export of
+    // one part does not. Preferring the 3MF unconditionally shows "too large" to someone
+    // whose model previews perfectly well from the file next to it.
+    const huge = { ...threemf, size: MAX_PREVIEW_BYTES + 1 };
+    render(MeshViewer, { modelId: 7, files: [huge, stl] });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/models/7/files/10');
+    expect(screen.getByRole('button', { name: 'bracket.stl' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('still refuses when every mesh is over the cap', async () => {
+    // Nothing better to fall back to, so the refusal is the honest answer rather than an
+    // empty panel - and it is still the 3MF that gets named.
+    render(MeshViewer, {
+      modelId: 7,
+      files: [
+        { ...stl, size: MAX_PREVIEW_BYTES + 1 },
+        { ...threemf, size: MAX_PREVIEW_BYTES + 2 },
+      ],
+    });
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(/too large to preview/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'plate.3mf' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('does not let a mesh still in flight paint over the no-preview message', async () => {
+    // Selecting the G-code mid-download. The unsupported branch needs the same request
+    // counter as a file switch does, or the mesh lands afterwards and the panel shows a
+    // model under a file that has none.
+    let releaseSlow: (value: unknown) => void = () => {};
+    fetchMock.mockImplementationOnce(
+      () => new Promise((resolve) => (releaseSlow = resolve)),
+    );
+
+    render(MeshViewer, { modelId: 7, files: [stl, gcode] });
+    await screen.findByText(/Loading preview/);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'plate.gcode' }));
+    await screen.findByText(/no 3D preview for plate\.gcode/);
+
+    releaseSlow(ok(BOX));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText(/no 3D preview for plate\.gcode/)).not.toBeNull();
+    expect(show).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('mesh-readout')).toBeNull();
+  });
+
   it('does not let a slow response paint over a newer one', async () => {
     // Switching files while the first is still in flight. Without the request counter
     // the first response lands last and the panel shows the wrong file's dimensions
