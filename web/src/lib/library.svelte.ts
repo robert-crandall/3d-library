@@ -74,7 +74,7 @@ class Library {
       const failure =
         categories.error ?? tags.error ?? materials.error ?? counts.error;
       if (failure) {
-        this.#fail(apiErrorMessage(failure, 'Could not load categories and tags.'));
+        this.#fail(apiErrorMessage(failure, 'Could not load the library.'));
         return;
       }
       this.categories = categories.data ?? [];
