@@ -215,6 +215,9 @@ describe('model detail page', () => {
 
     await screen.findByRole('link', { name: 'dry-box-body.3mf' });
     await fireEvent.click(screen.getByRole('button', { name: /Delete dry-box-body\.3mf/ }));
+    // Names the file. A confirmation that says "this file" is one the user
+    // cannot check before agreeing to it.
+    expect(screen.getByRole('dialog').textContent).toContain('dry-box-body.3mf will be deleted');
     await fireEvent.click(screen.getByRole('button', { name: 'Delete file' }));
 
     expect(await screen.findByText('This model has no files.')).toBeTruthy();

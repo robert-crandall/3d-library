@@ -23,6 +23,10 @@ describe('library page', () => {
     render(LibraryPage);
 
     expect(await screen.findByRole('heading', { name: 'Benchy' })).toBeTruthy();
+    // The href, not just the presence of a link: this is the only way into the
+    // model page, and a tile that renders but points at the wrong place looks
+    // identical in every other assertion.
+    expect(screen.getByRole('link', { name: /Benchy/ }).getAttribute('href')).toBe('/models/1');
     expect(screen.getByText('3 files · 12 MB')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Gridfinity' })).toBeTruthy();
     expect(screen.getByText('1 file · 12 MB')).toBeTruthy();

@@ -351,9 +351,9 @@
     model={{ id: model.id, fileCount: model.fileCount }}
     onclose={(opts) => {
       adding = false;
-      // Always true from the add-files flow: files may have landed before the
-      // user cancelled, and the count on screen is the one thing this page must
-      // not get wrong.
+      // The dialog decides: false when nothing was sent, true when files landed
+      // and the count on screen is now behind. Reading it rather than assuming
+      // it is what keeps a cancel from costing a request.
       if (opts?.reload) load();
     }}
   />
