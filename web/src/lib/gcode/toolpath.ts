@@ -11,6 +11,8 @@
 // `finish()` at the end - so a 300 MB file is parsed as it arrives instead of being
 // buffered whole and then parsed.
 
+import type { Bounds } from '$lib/viewer/framing';
+
 /** Two endpoints, three axes each. */
 const FLOATS_PER_SEGMENT = 6;
 
@@ -22,8 +24,6 @@ const FLOATS_PER_SEGMENT = 6;
  * memory at every reallocation, on the largest allocation in the app. Fixed chunks
  * never copy. 65536 segments is 1.5 MB per chunk.
  */
-import type { Bounds } from '$lib/viewer/framing';
-
 export const CHUNK_SEGMENTS = 65536;
 
 /**
