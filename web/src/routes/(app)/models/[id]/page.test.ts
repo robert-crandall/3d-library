@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ModelPage from './+page.svelte';
 import { load } from './+page';
+import { coreOnly3mf } from '$lib/mesh/fixtures';
 
 const get = vi.fn();
 const put = vi.fn();
@@ -16,6 +17,14 @@ vi.mock('$lib/api/client', () => ({
   }
 }));
 vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => goto(...args) }));
+
+// The page embeds the mesh viewer, which needs a GL context jsdom does not have and
+// downloads the file with a raw fetch. Both are stubbed so the viewer settles quietly:
+// what it does with the bytes is MeshViewer.test.ts's job, not this file's.
+vi.mock('$lib/mesh/scene', () => ({
+  createViewer: () => ({ show: vi.fn(), setShading: vi.fn(), dispose: vi.fn(), resize: vi.fn() })
+}));
+vi.stubGlobal('fetch', async () => new Response(coreOnly3mf()));
 
 const file = {
   id: 10,

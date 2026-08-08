@@ -6,6 +6,7 @@
   import EditModelDialog from '$lib/components/EditModelDialog.svelte';
   import UploadDialog from '$lib/components/UploadDialog.svelte';
   import SliceSettings from '$lib/components/SliceSettings.svelte';
+  import MeshViewer from '$lib/components/MeshViewer.svelte';
   import Thumbnail from '$lib/components/Thumbnail.svelte';
   import { formatBytes, formatDate, formatFileCount } from '$lib/format';
   import { sliceRows } from '$lib/slice';
@@ -277,20 +278,7 @@
 
     <div class="mt-6 grid grid-cols-1 items-start gap-5 lg:grid-cols-[1fr_360px]">
       <div class="flex flex-col gap-5">
-        <!--
-          Screen 1c's viewer, drawn as the placeholder the design itself draws:
-          a hatched panel with nothing in it. It is here rather than omitted -
-          unlike Slice settings and Versions - because it is the largest element
-          on the screen, and a detail page without it is a different layout, not
-          the same layout missing a panel. It is inert and aria-hidden: there is
-          nothing to read out and nothing to operate until M5 puts a mesh in it.
-        -->
-        <div
-          aria-hidden="true"
-          class="hatch flex h-64 items-center justify-center rounded-tile border border-line"
-        >
-          <span class="text-xs text-faint">3D preview</span>
-        </div>
+        <MeshViewer modelId={model.id} files={model.files} />
 
         <section class="rounded-tile border border-line bg-surface">
         <div class="flex items-baseline justify-between border-b border-line px-4 py-3">
@@ -505,16 +493,3 @@
   />
 {/if}
 
-<style>
-  /* Scoped, not in app.css, because it is this screen's placeholder and not a
-     palette entry. Built from the palette variables so the .dark block re-tints
-     it without a second rule here. */
-  .hatch {
-    background-color: var(--color-sidebar);
-    background-image: repeating-linear-gradient(
-      45deg,
-      var(--color-line) 0 8px,
-      var(--color-sidebar) 8px 16px
-    );
-  }
-</style>
