@@ -27,14 +27,22 @@
 
   let { modelId, files }: { modelId: number; files: ModelFile[] } = $props();
 
-  const meshFiles = $derived(files.filter((file) => previewable(file.type)));
-
-  let selectedId = $state<number>();
-  const selected = $derived(
-    meshFiles.find((file) => file.id === selectedId) ?? meshFiles[0],
+  // 3MF ahead of STL when a model has both. A 3MF carries its own unit and its object
+  // structure, where an STL is a bag of triangles everyone agrees to read as
+  // millimetres, so it is the better of the two to open on. Without this the default is
+  // whichever the server lists first, which is upload order wearing a disguise.
+  const openOn = $derived(
+    files.find((file) => file.type === '3mf') ??
+      files.find((file) => previewable(file.type)),
   );
 
-  type Status = 'empty' | 'too-large' | 'loading' | 'ready' | 'failed';
+  let selectedId = $state<number>();
+  // Searched across every file, not just the previewable ones: the strip lists all of
+  // them, and picking a .gcode has to be a selection that sticks rather than one that
+  // silently snaps back to the mesh.
+  const selected = $derived(files.find((file) => file.id === selectedId) ?? openOn);
+
+  type Status = 'empty' | 'unsupported' | 'too-large' | 'loading' | 'ready' | 'failed';
   let status = $state<Status>('empty');
   let error = $state('');
   let readout = $state('');
@@ -156,16 +164,19 @@
   $effect(() => {
     const id = selectedFileId;
     untrack(() => {
-      const file = meshFiles.find((candidate) => candidate.id === id);
-      if (!file) {
-        generation++;
-        inFlight?.abort();
-        status = 'empty';
-        error = '';
-        readout = '';
+      const file = files.find((candidate) => candidate.id === id);
+      if (file && previewable(file.type)) {
+        void load(file);
         return;
       }
-      void load(file);
+      // Nothing to draw, for one of two reasons: the model has no mesh file at all, or
+      // the user picked one of the others in the strip. Both stop whatever the last
+      // selection started, or a mesh still in flight paints over the message.
+      generation++;
+      inFlight?.abort();
+      status = file ? 'unsupported' : 'empty';
+      error = '';
+      readout = '';
     });
   });
 
@@ -201,6 +212,11 @@
           <p class="text-sm text-muted">Loading preview…</p>
         {:else if status === 'empty'}
           <p class="text-sm text-muted">This model has no STL or 3MF file to preview.</p>
+        {:else if status === 'unsupported'}
+          <p class="max-w-md text-sm text-muted">
+            There is no 3D preview for {selected?.filename}. The viewer shows STL and 3MF
+            meshes; download it to open it in something that reads this.
+          </p>
         {:else}
           <p role="alert" class="max-w-md text-sm text-muted">{error}</p>
         {/if}
@@ -238,13 +254,17 @@
     </div>
   {/if}
 
-  {#if meshFiles.length > 1}
+  {#if files.length > 1}
     <!--
-      Only when there is a choice to make. A model with one mesh file gets no strip,
-      because a control with a single option is a label pretending to be a button.
+      Every file, not just the previewable ones, matching design 1c's strip - it lists
+      a .gcode and a .jpg alongside the meshes. Clicking one of those is a real
+      selection that lands on the "no preview" state, which is the point: a file the
+      viewer cannot draw has to say so, not be missing from the strip and leave the user
+      wondering where it went. Only when there is a choice to make, though - a control
+      with a single option is a label pretending to be a button.
     -->
     <div class="flex flex-wrap gap-1 border-t border-line px-4 py-2">
-      {#each meshFiles as file (file.id)}
+      {#each files as file (file.id)}
         <button
           type="button"
           class="max-w-56 truncate rounded border border-line-strong px-2 py-1 text-xs"

@@ -135,23 +135,53 @@ describe('MeshViewer', () => {
 
   it('switches file when the strip is used, and only shows the strip for a choice', async () => {
     const { rerender } = render(MeshViewer, { modelId: 7, files: [stl] });
-    // One mesh file is not a choice, so there is nothing to click.
+    // One file is not a choice, so there is nothing to click.
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('button', { name: 'bracket.stl' })).toBeNull();
 
-    await rerender({ modelId: 7, files: [stl, threemf, gcode] });
-    fetchMock.mockResolvedValue(ok(coreOnly3mf()));
+    await rerender({ modelId: 7, files: [stl, lid] });
 
-    // The G-code file is not offered: the strip lists what can be previewed.
-    expect(screen.queryByRole('button', { name: 'plate.gcode' })).toBeNull();
     const first = screen.getByRole('button', { name: 'bracket.stl' });
     expect(first.getAttribute('aria-pressed')).toBe('true');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'plate.3mf' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'lid.stl' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[1][0]).toBe('/api/models/7/files/11');
-    expect(screen.getByRole('button', { name: 'plate.3mf' }).getAttribute('aria-pressed')).toBe('true');
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/models/7/files/13');
+    expect(screen.getByRole('button', { name: 'lid.stl' }).getAttribute('aria-pressed')).toBe('true');
     expect(first.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('opens on the 3MF when a model has both, whatever order they are listed in', async () => {
+    // The server lists files by id, which is upload order. Taking the first previewable
+    // one would make the default depend on which the user happened to drop in first, so
+    // this fixture deliberately puts the STL ahead of the 3MF.
+    fetchMock.mockResolvedValue(ok(coreOnly3mf()));
+    render(MeshViewer, { modelId: 7, files: [stl, threemf] });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/models/7/files/11');
+    expect(screen.getByRole('button', { name: 'plate.3mf' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'bracket.stl' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('offers files it cannot draw and says so when one is picked', async () => {
+    // Acceptance criterion 5. The strip lists everything the model has, so choosing the
+    // G-code is a thing a user can actually do - and doing it has to say why there is no
+    // preview rather than leave an empty box. Filtering the strip down to meshes would
+    // make this state unreachable, which is the bug this pins.
+    render(MeshViewer, { modelId: 7, files: [stl, gcode] });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'plate.gcode' }));
+
+    expect((await screen.findByText(/no 3D preview for plate\.gcode/)).textContent).toMatch(
+      /STL and 3MF/,
+    );
+    // Not downloaded: there is nothing this component could do with the bytes.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // And nothing to shade, so the controls go with it.
+    expect(screen.queryByRole('group', { name: 'Shading' })).toBeNull();
+    expect(screen.queryByTestId('mesh-readout')).toBeNull();
   });
 
   it('does not let a slow response paint over a newer one', async () => {

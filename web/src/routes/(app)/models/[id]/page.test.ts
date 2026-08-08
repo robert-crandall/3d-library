@@ -475,7 +475,7 @@ describe('model detail thumbnails', () => {
     });
     render(ModelPage, { data });
 
-    expect(await screen.findByText('notes.txt')).toBeTruthy();
+    expect(await screen.findByRole('link', { name: 'notes.txt' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Use as thumbnail' })).toBeNull();
   });
 
@@ -493,7 +493,7 @@ describe('model detail thumbnails', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('that file has no thumbnail');
-    expect(screen.getByText('dry-box-body.3mf')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'dry-box-body.3mf' })).toBeTruthy();
   });
 
   // Every mutation is disabled while any one is in flight. Without this a pin
