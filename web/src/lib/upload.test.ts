@@ -314,6 +314,27 @@ describe('uploadModel', () => {
     expect(failed).toEqual(['b.stl']);
   });
 
+  // A 5xx on a later file is the other way a file can be unconfirmed: the
+  // server may well have written it and then failed on the way out.
+  it('does not trust the count when a later file got a 5xx', async () => {
+    let posts = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!init) throw new TypeError('Failed to fetch');
+        posts += 1;
+        if (posts === 1) {
+          return { ok: true, json: async () => ({ id: 9, name: 'Both', fileCount: 1 }) } as never;
+        }
+        return { ok: false, status: 500, json: async () => ({ detail: 'boom' }) } as never;
+      })
+    );
+
+    await expect(
+      uploadModel('Both', [file('a.stl'), file('b.stl')], () => {})
+    ).rejects.toMatchObject({ certain: false });
+  });
+
   // A 201 whose body never arrives is the nastiest case in the whole flow: the
   // model exists, but we do not know its id, so it cannot be shown and cannot
   // be reported as created. What it must not be is retryable.
