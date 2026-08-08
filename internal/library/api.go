@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -266,7 +267,7 @@ func registerList(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 		}
 		models, err := svc.List(ctx, userID)
 		if err != nil {
-			return nil, err
+			return nil, internalError("could not read the library", err)
 		}
 		return &modelsOutput{Body: models}, nil
 	})
@@ -296,7 +297,7 @@ func registerGet(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 			return nil, huma.Error404NotFound("model not found")
 		}
 		if err != nil {
-			return nil, err
+			return nil, internalError("could not read the model", err)
 		}
 		return &modelOutput{Body: model}, nil
 	})
@@ -372,7 +373,7 @@ func registerDeleteModel(api huma.API, svc *Service, currentUser CurrentUserFunc
 		if err := svc.DeleteModel(ctx, userID, in.ID); errors.Is(err, ErrNotFound) {
 			return nil, huma.Error404NotFound("model not found")
 		} else if err != nil {
-			return nil, err
+			return nil, internalError("could not delete the model", err)
 		}
 		return nil, nil
 	})
@@ -401,7 +402,7 @@ func registerDeleteFile(api huma.API, svc *Service, currentUser CurrentUserFunc)
 		if err := svc.DeleteFile(ctx, userID, in.ID, in.FileID); errors.Is(err, ErrNotFound) {
 			return nil, huma.Error404NotFound("file not found")
 		} else if err != nil {
-			return nil, err
+			return nil, internalError("could not delete the file", err)
 		}
 		return nil, nil
 	})
@@ -445,7 +446,7 @@ func registerDownload(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 			return nil, huma.Error404NotFound("file not found")
 		}
 		if err != nil {
-			return nil, err
+			return nil, internalError("could not read the file", err)
 		}
 
 		return &huma.StreamResponse{Body: func(hctx huma.Context) {
@@ -472,4 +473,14 @@ func registerDownload(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 			http.ServeContent(w, r, meta.Filename, meta.CreatedAt, fh)
 		}}, nil
 	})
+}
+
+// internalError is the only way an unexpected failure leaves this package. huma
+// renders err.Error() as the problem detail, and these errors are wrapped all
+// the way down: a Postgres message, or - from the download path - a storage key
+// and the directory it lives in. The caller gets a sentence, the log gets the
+// error.
+func internalError(message string, err error) error {
+	slog.Error(message, "error", err)
+	return huma.Error500InternalServerError(message)
 }

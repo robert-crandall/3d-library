@@ -1603,3 +1603,43 @@ func TestFileIDFromAnotherModelIsNotFound(t *testing.T) {
 		t.Errorf("the crossed delete took the other model's file: %+v", got)
 	}
 }
+
+// An unexpected failure is a sentence, not the wrapped error. huma renders
+// err.Error() as the problem detail, and these errors carry a filesystem path
+// and a storage key all the way up from the disk layer. The trigger is real:
+// a blob removed out from under its row is exactly what a half-restored backup
+// looks like.
+func TestUnexpectedFailuresDoNotLeakInternals(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	dir := t.TempDir()
+	ts := newTestServer(t, pool, library.Options{Dir: dir})
+	c := signIn(t, ts, "leaks@example.com")
+
+	resp, body := c.upload("Benchy", map[string]string{"benchy.stl": "solid benchy\n"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	model := decodeModel(t, body)
+
+	final, _ := blobs(t, dir)
+	if len(final) != 1 {
+		t.Fatalf("blobs = %v, want one", final)
+	}
+	if err := os.Remove(filepath.Join(dir, final[0])); err != nil {
+		t.Fatalf("remove blob: %v", err)
+	}
+
+	resp, out := c.get(fmt.Sprintf("/api/models/%d/files/%d", model.ID, model.Files[0].ID))
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("download: got %d: %s", resp.StatusCode, out)
+	}
+	// Each of these is a different leak: the wrapping says which internal call
+	// failed, the storage key names a file the caller was never told about, and
+	// the directory is the server's filesystem layout.
+	for _, secret := range []string{"library:", final[0], dir} {
+		if strings.Contains(out, secret) {
+			t.Errorf("problem detail leaks %q: %s", secret, out)
+		}
+	}
+}

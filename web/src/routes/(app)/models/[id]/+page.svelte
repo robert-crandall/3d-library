@@ -325,7 +325,7 @@
                  text and the editor is a textarea, so the newline the user
                  typed is the only separator there is. -->
             <ul class="mt-2 list-disc space-y-1 pl-4 text-sm text-muted">
-              {#each model.printTips.split('\n').filter((tip) => tip.trim() !== '') as tip}
+              {#each model.printTips.split('\n').map((tip) => tip.trim()).filter(Boolean) as tip}
                 <li>{tip}</li>
               {/each}
             </ul>

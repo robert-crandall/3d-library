@@ -98,7 +98,10 @@ describe('model detail page', () => {
   // as "list, 3 items".
   it('renders print tips one per line', async () => {
     get.mockResolvedValue({
-      data: { ...model, printTips: 'PETG at 245 C.\n\nBrim on.\nNo supports.' }
+      // The \r is what a tip pasted from a Windows-authored README arrives with,
+      // and the stray spaces are what anyone typing a list produces. Splitting
+      // on \n alone leaves both in the rendered item.
+      data: { ...model, printTips: 'PETG at 245 C.\r\n\r\nBrim on.\n  No supports.  ' }
     });
     render(ModelPage, { data });
 
