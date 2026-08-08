@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"io"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -71,6 +72,34 @@ type Meta struct {
 	MaxVolumetricSpeed *float64 `json:"maxVolumetricSpeed,omitempty"`
 	PrinterModel       string   `json:"printerModel,omitempty"`
 	Supports           *bool    `json:"supports,omitempty"`
+
+	// What the printer profile says the machine can print, and what colour the
+	// filament is. Neither is a slice *setting* the panel lists - they are here
+	// because the G-code viewer needs them before it starts streaming the file,
+	// and the config block that holds them is at the *end* of a G-code file.
+	// Reading them here means the viewer has them with the file list; parsing
+	// them in the browser would mean the plate appears and the whole model
+	// changes colour when the download finishes.
+	BuildVolume   *BuildVolume `json:"buildVolume,omitempty"`
+	FilamentColor string       `json:"filamentColor,omitempty"`
+}
+
+// BuildVolume is the printable envelope a printer profile declares.
+//
+// The bed is a rectangle rather than a size because a printer's origin is not
+// always its bed's corner, and the viewer draws the plate where the machine
+// coordinates in the file say it is. Rectangular is false when the profile's
+// polygon is not a four-point axis-aligned rectangle - a delta's is a
+// many-sided approximation of a circle, and drawing its bounding rectangle
+// would be a plate the shape of a bed nobody owns. The numbers still describe
+// the envelope in that case, so the readout can report it.
+type BuildVolume struct {
+	MinXMm      float64 `json:"minXMm"`
+	MinYMm      float64 `json:"minYMm"`
+	MaxXMm      float64 `json:"maxXMm"`
+	MaxYMm      float64 `json:"maxYMm"`
+	HeightMm    float64 `json:"heightMm"`
+	Rectangular bool    `json:"rectangular"`
 }
 
 // Parse reads the two windows and returns what it learned.
@@ -290,6 +319,8 @@ func (p *parser) meta() Meta {
 	}
 
 	m.BedTempC = p.bedTemp()
+	m.BuildVolume = p.buildVolume()
+	m.FilamentColor = p.filamentColor()
 
 	// 0 means "no limit" in every Slic3r-lineage slicer, so reporting
 	// "0 mm³/s" would say the opposite of what the file says.
@@ -341,6 +372,122 @@ var plates = map[string]string{
 	"high temp plate":    "hot_plate_temp",
 	"smooth pei plate":   "hot_plate_temp",
 	"textured pei plate": "textured_plate_temp",
+}
+
+// buildVolume resolves the printable envelope from the bed polygon and the
+// height limit. Slic3r-lineage slicers call them bed_shape and
+// max_print_height; Orca and Bambu call them printable_area and
+// printable_height and write both spellings, so their own is asked for first.
+// Cura writes neither, which is the "build volume unknown" case AC4 requires
+// the viewer to render anyway.
+//
+// Both or neither, deliberately: a bed with no height and a height with no bed
+// each describe half a box, and every slicer that writes one writes the other.
+// Reporting half of it would mean the readout inventing the missing dimension.
+func (p *parser) buildVolume() *BuildVolume {
+	polygon, ok := p.seen["printable_area"]
+	if !ok {
+		if polygon, ok = p.seen["bed_shape"]; !ok {
+			return nil
+		}
+	}
+	height := p.number("printable_height", "max_print_height")
+	if height == nil || *height <= 0 {
+		return nil
+	}
+
+	points := strings.Split(polygon, ",")
+	if len(points) < 3 {
+		return nil
+	}
+	xs := make([]float64, 0, len(points))
+	ys := make([]float64, 0, len(points))
+	for _, point := range points {
+		// The separator is found rather than split on, because both halves can
+		// be negative and `-2x-8` split on `x` is still two fields only by
+		// luck of there being no second separator.
+		i := strings.IndexByte(point, 'x')
+		if i < 0 {
+			return nil
+		}
+		x, err := strconv.ParseFloat(strings.TrimSpace(point[:i]), 64)
+		if err != nil || !isFinite(x) {
+			return nil
+		}
+		y, err := strconv.ParseFloat(strings.TrimSpace(point[i+1:]), 64)
+		if err != nil || !isFinite(y) {
+			return nil
+		}
+		xs = append(xs, x)
+		ys = append(ys, y)
+	}
+
+	volume := BuildVolume{
+		MinXMm:      slices.Min(xs),
+		MinYMm:      slices.Min(ys),
+		MaxXMm:      slices.Max(xs),
+		MaxYMm:      slices.Max(ys),
+		HeightMm:    *height,
+		Rectangular: isRectangle(xs, ys),
+	}
+	// A bed with no area is not a bed. Nothing writes one, but a zero-size
+	// plate would draw as a dot at the origin rather than as nothing.
+	if volume.MaxXMm <= volume.MinXMm || volume.MaxYMm <= volume.MinYMm {
+		return nil
+	}
+	return &volume
+}
+
+// isRectangle reports whether the polygon is the four corners of an
+// axis-aligned rectangle, in any order: exactly two distinct X values, exactly
+// two distinct Y values, and all four combinations present. A delta's circle
+// approximation and a Prusa XL's notched bed both fail it.
+func isRectangle(xs, ys []float64) bool {
+	if len(xs) != 4 {
+		return false
+	}
+	corners := make(map[[2]float64]bool, 4)
+	for i := range xs {
+		corners[[2]float64{xs[i], ys[i]}] = true
+	}
+	distinctX := map[float64]bool{}
+	distinctY := map[float64]bool{}
+	for corner := range corners {
+		distinctX[corner[0]] = true
+		distinctY[corner[1]] = true
+	}
+	return len(corners) == 4 && len(distinctX) == 2 && len(distinctY) == 2
+}
+
+// filamentColor is the first extruder's colour as `#rrggbb`.
+//
+// The per-extruder tail is already gone by the time this runs - line() cuts an
+// `=` value at the first `;`, so `#FF8000;#FF8000;#FF8000` arrives as one
+// colour - which is why a five-extruder file needs no code here.
+//
+// Anything that is not six or eight hex digits is dropped rather than passed
+// on, so the viewer can use the value directly instead of validating a string
+// from a file a second time. Eight is the `#rrggbbaa` form: I have no G-code
+// fixture that writes one, but a viewer that ignores a colour sitting in the
+// file is a worse failure than one that ignores an alpha channel it cannot use.
+func (p *parser) filamentColor() string {
+	v := p.seen["filament_colour"]
+	if len(v) != 7 && len(v) != 9 {
+		return ""
+	}
+	if v[0] != '#' {
+		return ""
+	}
+	for i := 1; i < len(v); i++ {
+		if !isHex(v[i]) {
+			return ""
+		}
+	}
+	return strings.ToLower(v[:7])
+}
+
+func isHex(b byte) bool {
+	return isDigit(b) || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
 }
 
 func (p *parser) text(keys ...string) string {
@@ -565,6 +712,9 @@ var candidates = func() map[string]bool {
 		"filament_max_volumetric_speed", "max_volumetric_speed",
 		"printer_model", "target_machine.name",
 		"support_material", "enable_support",
+		"bed_shape", "printable_area",
+		"max_print_height", "printable_height",
+		"filament_colour",
 	}
 	set := make(map[string]bool, len(keys))
 	for _, k := range keys {

@@ -6,8 +6,8 @@
   import EditModelDialog from '$lib/components/EditModelDialog.svelte';
   import UploadDialog from '$lib/components/UploadDialog.svelte';
   import SliceSettings from '$lib/components/SliceSettings.svelte';
-  import MeshViewer from '$lib/components/MeshViewer.svelte';
-  import { previewable } from '$lib/mesh/parse';
+  import FilePreviewPanel from '$lib/components/FilePreviewPanel.svelte';
+  import { hasPreview } from '$lib/preview';
   import Thumbnail from '$lib/components/Thumbnail.svelte';
   import { formatBytes, formatDate, formatFileCount } from '$lib/format';
   import { sliceRows } from '$lib/slice';
@@ -53,10 +53,10 @@
 
   // The viewer is a section like the description and the source link: absent when there
   // is nothing to put in it, rather than present and empty. Deciding it here is also
-  // what keeps three.js off a model that has no mesh - `MeshViewer` imports it on mount,
-  // so an always-present panel would fetch 130 KB to tell a G-code-only model there is
-  // nothing to show.
-  const hasMesh = $derived(model?.files.some((file) => previewable(file.type)) ?? false);
+  // what keeps three.js off a model with nothing to draw - the viewers import it on
+  // mount, so an always-present panel would fetch 130 KB to tell a model of photographs
+  // there is nothing to show.
+  const previewable = $derived(model ? hasPreview(model.files) : false);
   // Its own message rather than the page's `error`, which is only rendered by
   // the `failed` branch: a refused pin must not replace a model that loaded
   // fine with an error screen.
@@ -286,8 +286,8 @@
 
     <div class="mt-6 grid grid-cols-1 items-start gap-5 lg:grid-cols-[1fr_360px]">
       <div class="flex flex-col gap-5">
-        {#if hasMesh}
-          <MeshViewer modelId={model.id} files={model.files} />
+        {#if previewable}
+          <FilePreviewPanel modelId={model.id} files={model.files} />
         {/if}
 
         <section class="rounded-tile border border-line bg-surface">

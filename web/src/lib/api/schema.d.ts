@@ -395,6 +395,19 @@ export interface components {
             /** @description Whether registration is currently accepted */
             registrationOpen: boolean;
         };
+        BuildVolume: {
+            /** Format: double */
+            heightMm: number;
+            /** Format: double */
+            maxXMm: number;
+            /** Format: double */
+            maxYMm: number;
+            /** Format: double */
+            minXMm: number;
+            /** Format: double */
+            minYMm: number;
+            rectangular: boolean;
+        };
         CreateTokenInputBody: {
             /**
              * Format: uri
@@ -517,6 +530,8 @@ export interface components {
             bedTempC?: number;
             /** Format: int64 */
             bottomLayers?: number;
+            buildVolume?: components["schemas"]["BuildVolume"];
+            filamentColor?: string;
             /** Format: double */
             filamentCost?: number;
             /** Format: double */

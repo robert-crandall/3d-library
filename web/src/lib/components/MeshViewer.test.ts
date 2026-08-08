@@ -4,6 +4,10 @@ import MeshViewer from './MeshViewer.svelte';
 import { asciiStl, binaryStl, boxTriangles, coreOnly3mf } from '$lib/mesh/fixtures';
 import { MAX_PREVIEW_BYTES } from '$lib/mesh/parse';
 
+// Which file is showing belongs to `FilePreviewPanel`, and is tested there. This file
+// covers what this component decides: what it downloads, what state it lands in, what
+// the readout says, and which of a pair of overlapping responses wins.
+//
 // three.js needs a GL context, which jsdom does not have. Stubbing the whole module is
 // what lets the component's own decisions - which file, which state, what the readout
 // says - be tested at all; what is stubbed away is exercised by using the app.
@@ -52,8 +56,8 @@ beforeEach(() => {
 });
 
 describe('MeshViewer', () => {
-  it('loads the first mesh file and reports its dimensions', async () => {
-    render(MeshViewer, { modelId: 7, files: [stl] });
+  it('loads the file it is given and reports its dimensions', async () => {
+    render(MeshViewer, { modelId: 7, file: stl });
     await waitFor(() =>
       expect(screen.getByTestId('mesh-readout').textContent).toMatch('20 × 10 × 5 mm · 1 object',
       ));
@@ -71,7 +75,7 @@ describe('MeshViewer', () => {
         }),
       ),
     );
-    render(MeshViewer, { modelId: 7, files: [threemf] });
+    render(MeshViewer, { modelId: 7, file: threemf });
     await waitFor(() =>
       expect(screen.getByTestId('mesh-readout').textContent).toMatch('70 × 10 × 5 mm · 2 objects',
       ));
@@ -81,13 +85,13 @@ describe('MeshViewer', () => {
     // Three buttons that cannot change anything are noise a screen reader still reads
     // out. Markup that is merely hidden would satisfy a `toBeVisible` check and fail
     // this one.
-    render(MeshViewer, { modelId: 7, files: [{ ...stl, size: MAX_PREVIEW_BYTES + 1 }] });
+    render(MeshViewer, { modelId: 7, file: { ...stl, size: MAX_PREVIEW_BYTES + 1 } });
     await screen.findByRole('alert');
     expect(screen.queryByRole('group', { name: 'Shading' })).toBeNull();
   });
 
   it('shows the shading controls once a mesh is on screen', async () => {
-    render(MeshViewer, { modelId: 7, files: [stl] });
+    render(MeshViewer, { modelId: 7, file: stl });
     await waitFor(() => expect(show).toHaveBeenCalled());
     expect(screen.queryByRole('group', { name: 'Shading' })).not.toBeNull();
   });
@@ -97,7 +101,7 @@ describe('MeshViewer', () => {
     // mesh arrives is supported and the renderer builds it in that mode.
     let release: (value: unknown) => void = () => {};
     fetchMock.mockReturnValue(new Promise((resolve) => (release = resolve)));
-    render(MeshViewer, { modelId: 7, files: [stl] });
+    render(MeshViewer, { modelId: 7, file: stl });
     await screen.findByText(/Loading preview/);
     expect(screen.queryByRole('group', { name: 'Shading' })).not.toBeNull();
     release(ok(binaryStl(boxTriangles(20, 10, 5))));
@@ -107,7 +111,7 @@ describe('MeshViewer', () => {
     // The point of the cap is not to spend the bandwidth, so a request here would mean
     // it had already failed.
     const huge = { ...stl, size: MAX_PREVIEW_BYTES + 1 };
-    render(MeshViewer, { modelId: 7, files: [huge] });
+    render(MeshViewer, { modelId: 7, file: huge });
     expect((await screen.findByRole('alert')).textContent).toMatch(/too large to preview/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -116,118 +120,15 @@ describe('MeshViewer', () => {
     // fetch resolves for a 404, so without the response.ok check the error document
     // gets parsed as a mesh and the user is told their file is corrupt.
     fetchMock.mockResolvedValue({ ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) });
-    render(MeshViewer, { modelId: 7, files: [stl] });
+    render(MeshViewer, { modelId: 7, file: stl });
     expect((await screen.findByRole('alert')).textContent).toMatch(/could not be loaded/);
     expect(show).not.toHaveBeenCalled();
   });
 
   it('reports a corrupt file with the parser\'s own words', async () => {
     fetchMock.mockResolvedValue(ok(new TextEncoder().encode('junk'.repeat(40)).buffer));
-    render(MeshViewer, { modelId: 7, files: [stl] });
+    render(MeshViewer, { modelId: 7, file: stl });
     expect((await screen.findByRole('alert')).textContent).toMatch(/corrupt or truncated/);
-  });
-
-  it('switches file when the strip is used, and only shows the strip for a choice', async () => {
-    const { rerender } = render(MeshViewer, { modelId: 7, files: [stl] });
-    // One file is not a choice, so there is nothing to click.
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole('button', { name: 'bracket.stl' })).toBeNull();
-
-    await rerender({ modelId: 7, files: [stl, lid] });
-
-    const first = screen.getByRole('button', { name: 'bracket.stl' });
-    expect(first.getAttribute('aria-pressed')).toBe('true');
-
-    await fireEvent.click(screen.getByRole('button', { name: 'lid.stl' }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[1][0]).toBe('/api/models/7/files/13');
-    expect(screen.getByRole('button', { name: 'lid.stl' }).getAttribute('aria-pressed')).toBe('true');
-    expect(first.getAttribute('aria-pressed')).toBe('false');
-  });
-
-  it('opens on the 3MF when a model has both, whatever order they are listed in', async () => {
-    // The server lists files by id, which is upload order. Taking the first previewable
-    // one would make the default depend on which the user happened to drop in first, so
-    // this fixture deliberately puts the STL ahead of the 3MF.
-    fetchMock.mockResolvedValue(ok(coreOnly3mf()));
-    render(MeshViewer, { modelId: 7, files: [stl, threemf] });
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/models/7/files/11');
-    expect(screen.getByRole('button', { name: 'plate.3mf' }).getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getByRole('button', { name: 'bracket.stl' }).getAttribute('aria-pressed')).toBe('false');
-  });
-
-  it('offers files it cannot draw and says so when one is picked', async () => {
-    // Acceptance criterion 5. The strip lists everything the model has, so choosing the
-    // G-code is a thing a user can actually do - and doing it has to say why there is no
-    // preview rather than leave an empty box. Filtering the strip down to meshes would
-    // make this state unreachable, which is the bug this pins.
-    render(MeshViewer, { modelId: 7, files: [stl, gcode] });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'plate.gcode' }));
-
-    expect((await screen.findByText(/no 3D preview for plate\.gcode/)).textContent).toMatch(
-      /STL and 3MF/,
-    );
-    // Not downloaded: there is nothing this component could do with the bytes.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    // And nothing to shade, so the controls go with it.
-    expect(screen.queryByRole('group', { name: 'Shading' })).toBeNull();
-    expect(screen.queryByTestId('mesh-readout')).toBeNull();
-  });
-
-  it('does not open on a mesh it would refuse when a smaller one is there', async () => {
-    // A 3MF project file carrying every plate can pass the cap where the STL export of
-    // one part does not. Preferring the 3MF unconditionally shows "too large" to someone
-    // whose model previews perfectly well from the file next to it.
-    const huge = { ...threemf, size: MAX_PREVIEW_BYTES + 1 };
-    render(MeshViewer, { modelId: 7, files: [huge, stl] });
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/models/7/files/10');
-    expect(screen.getByRole('button', { name: 'bracket.stl' }).getAttribute('aria-pressed')).toBe('true');
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('still refuses when every mesh is over the cap', async () => {
-    // Nothing better to fall back to, so the refusal is the honest answer rather than an
-    // empty panel - and it is still the 3MF that gets named.
-    render(MeshViewer, {
-      modelId: 7,
-      files: [
-        { ...stl, size: MAX_PREVIEW_BYTES + 1 },
-        { ...threemf, size: MAX_PREVIEW_BYTES + 2 },
-      ],
-    });
-
-    expect((await screen.findByRole('alert')).textContent).toMatch(/too large to preview/);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'plate.3mf' }).getAttribute('aria-pressed')).toBe('true');
-  });
-
-  it('does not let a mesh still in flight paint over the no-preview message', async () => {
-    // Selecting the G-code mid-download. The unsupported branch needs the same request
-    // counter as a file switch does, or the mesh lands afterwards and the panel shows a
-    // model under a file that has none.
-    let releaseSlow: (value: unknown) => void = () => {};
-    fetchMock.mockImplementationOnce(
-      () => new Promise((resolve) => (releaseSlow = resolve)),
-    );
-
-    render(MeshViewer, { modelId: 7, files: [stl, gcode] });
-    await screen.findByText(/Loading preview/);
-
-    await fireEvent.click(screen.getByRole('button', { name: 'plate.gcode' }));
-    await screen.findByText(/no 3D preview for plate\.gcode/);
-
-    releaseSlow(ok(BOX));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(screen.queryByText(/no 3D preview for plate\.gcode/)).not.toBeNull();
-    expect(show).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('mesh-readout')).toBeNull();
   });
 
   it('does not let a slow response paint over a newer one', async () => {
@@ -240,10 +141,10 @@ describe('MeshViewer', () => {
     );
     fetchMock.mockResolvedValue(ok(asciiStl(boxTriangles(1, 2, 3))));
 
-    render(MeshViewer, { modelId: 7, files: [stl, lid] });
+    const { rerender } = render(MeshViewer, { modelId: 7, file: stl });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'lid.stl' }));
+    await rerender({ modelId: 7, file: lid });
     await waitFor(() =>
       expect(screen.getByTestId('mesh-readout').textContent).toMatch('1 × 2 × 3 mm'));
 
@@ -261,10 +162,10 @@ describe('MeshViewer', () => {
     );
     fetchMock.mockResolvedValue(ok(asciiStl(boxTriangles(1, 2, 3))));
 
-    render(MeshViewer, { modelId: 7, files: [stl, lid] });
+    const { rerender } = render(MeshViewer, { modelId: 7, file: stl });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'lid.stl' }));
+    await rerender({ modelId: 7, file: lid });
     await waitFor(() =>
       expect(screen.getByTestId('mesh-readout').textContent).toMatch('1 × 2 × 3 mm'));
 
@@ -275,7 +176,7 @@ describe('MeshViewer', () => {
   });
 
   it('changes shading without re-downloading the file', async () => {
-    render(MeshViewer, { modelId: 7, files: [stl] });
+    render(MeshViewer, { modelId: 7, file: stl });
     await waitFor(() => expect(show).toHaveBeenCalled());
     setShading.mockClear();
 
@@ -294,7 +195,7 @@ describe('MeshViewer', () => {
   it('releases the GL context when it unmounts', async () => {
     // Browsers cap live WebGL contexts at around 16, so a page that mounts the viewer
     // without ever disposing it eventually renders nothing at all.
-    const { unmount } = render(MeshViewer, { modelId: 7, files: [stl] });
+    const { unmount } = render(MeshViewer, { modelId: 7, file: stl });
     await waitFor(() => expect(show).toHaveBeenCalled());
     unmount();
     expect(dispose).toHaveBeenCalledTimes(1);
@@ -304,7 +205,7 @@ describe('MeshViewer', () => {
     viewerThrows = true;
     fetchMock.mockResolvedValue(ok(asciiStl(boxTriangles(1, 2, 3))));
 
-    render(MeshViewer, { modelId: 7, files: [stl] });
+    render(MeshViewer, { modelId: 7, file: stl });
 
     expect((await screen.findByRole('alert')).textContent).toMatch(/could not start the 3D preview/);
     expect(screen.queryByTestId('mesh-readout')).toBeNull();
@@ -317,7 +218,7 @@ describe('MeshViewer', () => {
     let release: (value: unknown) => void = () => {};
     fetchMock.mockReturnValue(new Promise((resolve) => (release = resolve)));
 
-    render(MeshViewer, { modelId: 7, files: [stl] });
+    render(MeshViewer, { modelId: 7, file: stl });
     // Wait for the viewer to exist, so the mount's own setShading('solid') has already
     // landed and the click below is provably a second, later call.
     await waitFor(() => expect(setShading).toHaveBeenCalledWith('solid'));

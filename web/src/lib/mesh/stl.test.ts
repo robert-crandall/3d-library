@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boundsOf, sizeOf } from './geometry';
+import { boundsOf, sizeOf } from '$lib/viewer/framing';
 import { asciiStl, binaryStl, boxTriangles } from './fixtures';
 import { parseStl } from './stl';
 

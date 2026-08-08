@@ -71,6 +71,43 @@
         ],
         "type": "object"
       },
+      "BuildVolume": {
+        "additionalProperties": false,
+        "properties": {
+          "heightMm": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxXMm": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxYMm": {
+            "format": "double",
+            "type": "number"
+          },
+          "minXMm": {
+            "format": "double",
+            "type": "number"
+          },
+          "minYMm": {
+            "format": "double",
+            "type": "number"
+          },
+          "rectangular": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "minXMm",
+          "minYMm",
+          "maxXMm",
+          "maxYMm",
+          "heightMm",
+          "rectangular"
+        ],
+        "type": "object"
+      },
       "CreateTokenInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -329,6 +366,12 @@
           "bottomLayers": {
             "format": "int64",
             "type": "integer"
+          },
+          "buildVolume": {
+            "$ref": "#/components/schemas/BuildVolume"
+          },
+          "filamentColor": {
+            "type": "string"
           },
           "filamentCost": {
             "format": "double",

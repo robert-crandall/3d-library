@@ -43,6 +43,12 @@ func TestParseFixtures(t *testing.T) {
 				FilamentGrams: f(0.2), FilamentMm: f(65.73), FilamentType: "PETG",
 				FilamentCost: f(0.01), MaxVolumetricSpeed: f(9),
 				PrinterModel: "XL5IS", Supports: b(false),
+				// bed_shape is a rectangle and the colour list has five
+				// identical entries, of which line() already keeps the first.
+				BuildVolume: &BuildVolume{
+					MaxXMm: 360, MaxYMm: 360, HeightMm: 360, Rectangular: true,
+				},
+				FilamentColor: "#ff8000",
 			},
 		},
 		{
@@ -59,6 +65,10 @@ func TestParseFixtures(t *testing.T) {
 				FilamentGrams: f(1.62), FilamentMm: f(542.28), FilamentType: "PLA",
 				FilamentCost: f(0.06),
 				PrinterModel: "Caribou_Duet_220", Supports: b(false),
+				BuildVolume: &BuildVolume{
+					MaxXMm: 250, MaxYMm: 210, HeightMm: 217, Rectangular: true,
+				},
+				FilamentColor: "#ff8000",
 			},
 		},
 		{
@@ -80,6 +90,12 @@ func TestParseFixtures(t *testing.T) {
 				FilamentGrams: f(0.59), FilamentMm: f(235.72), FilamentType: "ABS",
 				FilamentCost: f(0.01), MaxVolumetricSpeed: f(12),
 				PrinterModel: "Generic Klipper Printer", Supports: b(false),
+				// Orca writes printable_area *and* bed_shape with the same
+				// value; its own key is the one asked for first.
+				BuildVolume: &BuildVolume{
+					MaxXMm: 250, MaxYMm: 250, HeightMm: 250, Rectangular: true,
+				},
+				FilamentColor: "#f2754e",
 			},
 		},
 		{
@@ -95,6 +111,15 @@ func TestParseFixtures(t *testing.T) {
 				FilamentGrams: f(1.12), FilamentMm: f(375.61), FilamentType: "PLA",
 				FilamentCost: f(0.02), MaxVolumetricSpeed: f(12),
 				PrinterModel: "IdeaFormer IR3 V2", Supports: b(false),
+				// A belt printer: 250 x 2000 mm of bed and 250 mm of height,
+				// which the toolpaths in machine coordinates sit nowhere near.
+				// This file also writes `extruder_printable_height = 0` before
+				// the real key and `default_filament_colour = ""` before the
+				// real colour; exact key matching is what keeps both out.
+				BuildVolume: &BuildVolume{
+					MaxXMm: 250, MaxYMm: 2000, HeightMm: 250, Rectangular: true,
+				},
+				FilamentColor: "#26a69a",
 			},
 		},
 		{
@@ -544,4 +569,173 @@ func (s *spliced) ReadAt(p []byte, off int64) (int, error) {
 func splitAtLine(raw []byte, at int) (head, tail []byte) {
 	cut := bytes.LastIndexByte(raw[:at], '\n') + 1
 	return raw[:cut], append([]byte{'\n'}, raw[cut:]...)
+}
+
+// TestParseBuildVolume covers the shapes a printer profile can declare that the
+// six real fixtures do not: a delta's polygon, a bed with no height limit, and
+// the malformed values a hand-edited profile can leave behind.
+//
+// The viewer draws a plate from this, so "not a rectangle" has to be reported
+// rather than rounded up into one: a delta's bed_shape is a many-sided
+// approximation of a circle, and its bounding rectangle is a plate the shape of
+// a bed nobody owns. The envelope numbers stay, because the readout can still
+// honestly say how big the machine is.
+func TestParseBuildVolume(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  *BuildVolume
+	}{
+		{
+			name:  "rectangle at the origin",
+			lines: []string{"; bed_shape = 0x0,250x0,250x210,0x210", "; max_print_height = 217"},
+			want:  &BuildVolume{MaxXMm: 250, MaxYMm: 210, HeightMm: 217, Rectangular: true},
+		},
+		{
+			// A Prusa Mini's bed is declared with a negative origin. Reporting
+			// the size alone would put the plate 8 mm from where the machine
+			// coordinates in the file actually are.
+			name:  "rectangle away from the origin",
+			lines: []string{"; bed_shape = -2x-8,178x-8,178x172,-2x172", "; max_print_height = 180"},
+			want: &BuildVolume{
+				MinXMm: -2, MinYMm: -8, MaxXMm: 178, MaxYMm: 172,
+				HeightMm: 180, Rectangular: true,
+			},
+		},
+		{
+			// The corners in a different order are still the same rectangle.
+			name:  "rectangle listed anticlockwise",
+			lines: []string{"; bed_shape = 0x210,250x210,250x0,0x0", "; max_print_height = 217"},
+			want:  &BuildVolume{MaxXMm: 250, MaxYMm: 210, HeightMm: 217, Rectangular: true},
+		},
+		{
+			name: "delta circle approximation",
+			lines: []string{
+				"; bed_shape = 0x-85,42x-73,73x-42,85x0,73x42,42x73,0x85,-42x73,-73x42,-85x0,-73x-42,-42x-73",
+				"; max_print_height = 240",
+			},
+			want: &BuildVolume{
+				MinXMm: -85, MinYMm: -85, MaxXMm: 85, MaxYMm: 85,
+				HeightMm: 240, Rectangular: false,
+			},
+		},
+		{
+			// Four points that are not a rectangle: a parallelogram has two
+			// distinct X values only by accident of the count.
+			name:  "four points that are not a rectangle",
+			lines: []string{"; bed_shape = 0x0,100x0,120x100,20x100", "; max_print_height = 200"},
+			want: &BuildVolume{
+				MinXMm: 0, MinYMm: 0, MaxXMm: 120, MaxYMm: 100,
+				HeightMm: 200, Rectangular: false,
+			},
+		},
+		{
+			name:  "orca spelling wins over the slic3r one it also writes",
+			lines: []string{"; printable_area = 0x0,250x0,250x250,0x250", "; printable_height = 250", "; bed_shape = 0x0,180x0,180x180,0x180"},
+			want:  &BuildVolume{MaxXMm: 250, MaxYMm: 250, HeightMm: 250, Rectangular: true},
+		},
+		{
+			// The trap orcaslicer_2.3.gcode really contains: a different key
+			// that starts with the same word, written before the real one and
+			// set to zero.
+			name: "a zero on a lookalike key does not become the height",
+			lines: []string{
+				"; extruder_printable_height = 0",
+				"; printable_area = 0x0,250x0,250x250,0x250",
+				"; printable_height = 250",
+			},
+			want: &BuildVolume{MaxXMm: 250, MaxYMm: 250, HeightMm: 250, Rectangular: true},
+		},
+		{name: "bed with no height", lines: []string{"; bed_shape = 0x0,250x0,250x210,0x210"}},
+		{name: "height with no bed", lines: []string{"; max_print_height = 217"}},
+		{
+			name:  "zero height",
+			lines: []string{"; bed_shape = 0x0,250x0,250x210,0x210", "; max_print_height = 0"},
+		},
+		{
+			name:  "bed with no area",
+			lines: []string{"; bed_shape = 5x5,5x5,5x5,5x5", "; max_print_height = 200"},
+		},
+		{
+			name:  "two points is not a polygon",
+			lines: []string{"; bed_shape = 0x0,250x210", "; max_print_height = 217"},
+		},
+		{
+			name:  "a point with no separator",
+			lines: []string{"; bed_shape = 0x0,250,250x210,0x210", "; max_print_height = 217"},
+		},
+		{
+			name:  "a point that is not a number",
+			lines: []string{"; bed_shape = 0x0,250x0,widthxheight,0x210", "; max_print_height = 217"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseLines(t, tc.lines)
+			if a, b := jsonOf(t, Meta{BuildVolume: got.BuildVolume}), jsonOf(t, Meta{BuildVolume: tc.want}); a != b {
+				t.Errorf("build volume:\n%s\nwant:\n%s", a, b)
+			}
+		})
+	}
+}
+
+// TestParseFilamentColor is what AC3 rests on: the viewer draws the toolpaths
+// in this colour and does not check it again, so anything that is not a colour
+// has to be absent rather than passed through as a string three.js will read as
+// black.
+func TestParseFilamentColor(t *testing.T) {
+	for _, tc := range []struct{ name, line, want string }{
+		{name: "six digits", line: "; filament_colour = #F2754E", want: "#f2754e"},
+		{
+			// The five-extruder case, which needs no code: line() already cuts
+			// an `=` value at the first `;`.
+			name: "the first of a per-extruder list",
+			line: "; filament_colour = #FF8000;#00AE42;#FFFFFF;#000000;#26A69A",
+			want: "#ff8000",
+		},
+		{
+			// No G-code fixture writes the alpha form, but dropping a colour
+			// that is sitting right there is the worse of the two failures.
+			name: "eight digits keeps the six that mean something",
+			line: "; filament_colour = #00AE42FF",
+			want: "#00ae42",
+		},
+		{
+			// A longer value has to be dropped rather than cut down to its
+			// first seven characters, which would report a colour nobody wrote.
+			name: "ten digits",
+			line: "; filament_colour = #F2754EFF00",
+		},
+		{name: "empty", line: "; filament_colour = "},
+		{name: "the empty lookalike key", line: `; default_filament_colour = ""`},
+		{name: "quoted", line: `; filament_colour = "#F2754E"`},
+		{name: "no hash", line: "; filament_colour = F2754E"},
+		{name: "three-digit shorthand", line: "; filament_colour = #F00"},
+		{name: "a name rather than a value", line: "; filament_colour = orange"},
+		{name: "not hex", line: "; filament_colour = #GGGGGG"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseLines(t, []string{tc.line}).FilamentColor; got != tc.want {
+				t.Errorf("colour = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// parseLines runs Parse over a PrusaSlicer file made of the given config lines.
+//
+// The generator line is what makes Parse recognise the file at all, and the
+// layer height is there because Parse reports nothing at all from a file with
+// no panel field in it. A build volume without a layer height beside it is not
+// a file any slicer writes - both sit in the same alphabetical config block -
+// so the gate stays counting panel rows only.
+func parseLines(t *testing.T, lines []string) Meta {
+	t.Helper()
+	src := "; generated by PrusaSlicer 2.9.2 on 2025-01-01 at 00:00:00\n" +
+		"; layer_height = 0.2\n" +
+		strings.Join(lines, "\n") + "\n"
+	got, ok := Parse(strings.NewReader(src), int64(len(src)))
+	if !ok {
+		t.Fatal("Parse returned false")
+	}
+	return got
 }
