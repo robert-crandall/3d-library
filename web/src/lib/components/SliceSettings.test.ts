@@ -52,11 +52,15 @@ describe('slice settings panel', () => {
    * settings render as eleven rows, so a footer that had gone back to counting
    * rows would say eleven and this would catch it. On Cura's file the two
    * numbers are the same and it would not.
+   *
+   * It also has to sit outside the list. A dl may only contain dt, dd and div,
+   * and a stray paragraph in there is markup a screen reader is free to ignore.
    */
   it('reports the slicer and how many settings it actually read', () => {
     render(SliceSettings, { meta: orca, filename: 'plate-1.gcode' });
 
-    expect(screen.getByText('Detected slicer: OrcaSlicer 2.3.2-dev · 16 fields')).toBeTruthy();
+    const footer = screen.getByText('Detected slicer: OrcaSlicer 2.3.2-dev · 16 fields');
+    expect(footer.closest('dl')).toBeNull();
     expect(screen.getAllByRole('term')).toHaveLength(11);
   });
 

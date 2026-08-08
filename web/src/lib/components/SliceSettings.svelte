@@ -43,9 +43,12 @@
         <dd class="font-mono text-xs break-all text-ink">{row.value}</dd>
       </div>
     {/each}
-    <p class="pt-2 text-xs text-faint">
-      Detected slicer: {detectedSlicer(meta)} · {fields}
-      {fields === 1 ? 'field' : 'fields'}
-    </p>
   </dl>
+
+  <!-- Outside the list: a dl may only contain dt, dd and div, and the footer is
+       about the list rather than an entry in it. -->
+  <p class="px-4 pb-3 text-xs text-faint">
+    Detected slicer: {detectedSlicer(meta)} · {fields}
+    {fields === 1 ? 'field' : 'fields'}
+  </p>
 </section>

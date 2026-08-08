@@ -208,9 +208,10 @@ type staged struct {
 	// meta and metaJSON are the same value twice: the struct goes back to the
 	// client in the upload response, the bytes go to Postgres. Encoding once at
 	// staging time keeps the failure - if there could ever be one - away from
-	// the transaction.
+	// the transaction. json.RawMessage rather than []byte so pgx encodes it as
+	// jsonb rather than guessing at bytea.
 	meta     *gcode.Meta
-	metaJSON []byte
+	metaJSON json.RawMessage
 }
 
 // Create stores one file and the model that owns it, in that order.
