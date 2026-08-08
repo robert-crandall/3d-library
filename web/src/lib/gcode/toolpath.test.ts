@@ -550,6 +550,31 @@ describe('refusals', () => {
     expect(() => parser.push(magic.subarray(split))).toThrow(/binary G-code/);
   });
 
+  it('refuses a travel coordinate too large to hold in the geometry', () => {
+    // Travel is kept out of the print's bounds on purpose, so the bounds check cannot
+    // see this one - but travel positions go to the GPU as Float32 all the same, and
+    // with travel shown an Infinity there blanks the panel exactly as an extrusion
+    // would. `G0`, after a print that is otherwise perfectly measurable.
+    const huge = `1${'0'.repeat(40)}`;
+    expect(() =>
+      parse(['G90', 'M83', 'G1 X0 Y0 Z0.2', 'G1 X1 E1', `G0 X${huge}`].join('\n')),
+    ).toThrow(/coordinate too large/);
+  });
+
+  it('accepts a purge-line travel that the print bounds discard', () => {
+    // The first layer marker resets the print bounds to drop the purge line, and the
+    // travel pair must not reset with them: a file whose only travel is before that
+    // marker would otherwise leave the pair at its infinite sentinel and be refused as
+    // an overflow. Every fixture with a purge line takes this path.
+    const parsed = parse(
+      ['G90', 'M83', 'G1 X0 Y0 Z0.2', 'G1 X200 E10', 'G0 X5 Y5', ';LAYER_CHANGE', 'G1 X6 E1'].join(
+        '\n',
+      ),
+    );
+    expect(parsed.travelSegments).toBe(1);
+    expect(parsed.bounds?.max[0]).toBe(6);
+  });
+
   it('refuses a coordinate too large to hold in the geometry', () => {
     // Positions go to the GPU as Float32, where anything past ~3.4e38 becomes Infinity;
     // the camera fit then divides into NaN and the panel goes blank with no message,

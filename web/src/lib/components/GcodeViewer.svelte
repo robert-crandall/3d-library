@@ -16,7 +16,7 @@
     memory is actually spent on.
   */
   import { onMount, untrack } from 'svelte';
-  import { formatDimensions, sizeOf } from '$lib/viewer/framing';
+  import { formatDimensions } from '$lib/viewer/framing';
   import { MAX_GCODE_BYTES, loadToolpath } from '$lib/gcode/load';
   import { formatBytes } from '$lib/format';
   import { formatPrinter, resolvePrinter, toolpathColor } from '$lib/gcode/printer';
@@ -134,6 +134,11 @@
     error = '';
     progress = undefined;
     toolpath = undefined;
+    pending = undefined;
+    // Released now, not when the next file draws. The scene holds the previous print's
+    // buffers, and at the segment cap that is 204 MB kept alive through the whole of the
+    // next parse - two large plates of one project would then peak at twice the cap.
+    viewer?.clear();
 
     const controller = new AbortController();
     inFlight = controller;
@@ -188,7 +193,29 @@
 
   const lastLayer = $derived(Math.max((toolpath?.layers.length ?? 1) - 1, 0));
   const currentZ = $derived(toolpath?.layers[Math.min(layer, lastLayer)]?.z);
-  const dimensions = $derived(toolpath ? formatDimensions(sizeOf(toolpath.bounds)) : '');
+  const dimensions = $derived(toolpath ? formatDimensions(printSize(toolpath)) : '');
+
+  /**
+   * The size of the printed object, in millimetres.
+   *
+   * X and Y are the extent of the toolpaths, but the height is the last layer's Z, not
+   * anything read off the bounds. Two reasons, and each one alone would be enough:
+   *
+   * A toolpath's Z is the nozzle height, which is the *top* of the material it is laying
+   * down - the first layer sits at 0.2 and the material under it reaches the plate. So
+   * the height is measured from the bed, and taking `max - min` instead loses exactly one
+   * layer: a 48 mm Benchy reported 47.8, and a single-layer print reported 0 mm.
+   *
+   * And a layer's Z is the slicer's own `;Z:` where it declared one, which is the height
+   * above the bed even when the coordinates are not. A belt printer's are not: the
+   * IdeaFormer fixture prints on a 45-degree belt and its moves run `Y988.179 Z-987.979`,
+   * so `max[2]` there is -988. The declared Z says 4.00, which is true. On all four
+   * normal fixtures the two agree exactly, so this costs nothing to prefer.
+   */
+  function printSize(parsed: Toolpath): [number, number, number] {
+    const { min, max } = parsed.bounds ?? { min: [0, 0, 0], max: [0, 0, 0] };
+    return [max[0] - min[0], max[1] - min[1], parsed.layers.at(-1)?.z ?? 0];
+  }
 </script>
 
 <div data-testid="gcode-viewer">

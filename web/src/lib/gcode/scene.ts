@@ -34,6 +34,15 @@ const MAX_GRID_LINES = 100;
 export type GcodeViewer = {
   /** Replace the displayed toolpath and re-frame the camera on it. */
   show(toolpath: Toolpath, options: ShowOptions): void;
+  /**
+   * Drop the displayed toolpath, releasing its geometry and the parser buffers behind it.
+   *
+   * Called when the next file starts loading rather than when it finishes: the scene
+   * holds the previous print's arrays - up to 204 MB of them at the segment cap - and
+   * without this a switch between two large plates of one project has both in memory at
+   * once, which is twice what the cap was chosen to allow.
+   */
+  clear(): void;
   /** Draw layers `0..index` inclusive. */
   setLayer(index: number): void;
   setTravelVisible(visible: boolean): void;
@@ -124,6 +133,15 @@ export function createViewer(canvas: HTMLCanvasElement): GcodeViewer {
       grid.add(new LineSegments(buildVolumeGeometry(volume), gridMaterial));
 
       this.setLayer(toolpath.layers.length - 1);
+      viewport.render();
+    },
+
+    clear() {
+      shown = undefined;
+      for (const group of [extrusion, travel, grid]) {
+        disposeTree(group);
+        group.clear();
+      }
       viewport.render();
     },
 

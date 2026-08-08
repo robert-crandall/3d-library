@@ -13,6 +13,7 @@ import { DEFAULT_VOLUME } from '$lib/gcode/printer';
 
 const show = vi.fn();
 const setLayer = vi.fn();
+const clear = vi.fn();
 const setTravelVisible = vi.fn();
 const dispose = vi.fn();
 const resize = vi.fn();
@@ -20,7 +21,7 @@ let viewerThrows = false;
 vi.mock('$lib/gcode/scene', () => ({
   createViewer: () => {
     if (viewerThrows) throw new Error('Error creating WebGL context.');
-    return { show, setLayer, setTravelVisible, dispose, resize };
+    return { show, clear, setLayer, setTravelVisible, dispose, resize };
   },
 }));
 
@@ -83,11 +84,75 @@ beforeEach(() => {
 
 describe('GcodeViewer', () => {
   it('reads the file it is given and reports its dimensions', async () => {
+    // The height is 0.6, not 0.4. A toolpath's Z is the nozzle height, which is the top
+    // of the material it is laying down, so the print stands 0.6 mm off a plate it sits
+    // on - measuring between the lowest and highest toolpath loses the first layer.
+    // Asserting the whole string rather than the X and Y is the point: `10 × 20` passed
+    // just as happily when the height was wrong.
     render(GcodeViewer, { modelId: 7, file });
 
-    await waitFor(() => expect(screen.getByTestId('gcode-readout').textContent).toMatch('10 × 20'));
+    await waitFor(() =>
+      expect(screen.getByTestId('gcode-readout').textContent).toMatch('10 × 20 × 0.6 mm'),
+    );
     expect(fetchMock.mock.calls[0][0]).toBe('/api/models/7/files/12');
     await waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+  });
+
+  it('reports the height of a print only one layer tall', async () => {
+    // The degenerate case of measuring Z between the lowest and highest toolpath: with
+    // one layer they are the same number, and a print that exists reported 0 mm tall.
+    fetchMock.mockResolvedValue(respond(['G90', 'M83', 'G1 X0 Y0 Z0.3', 'G1 X10 E1'].join('\n')));
+    render(GcodeViewer, { modelId: 7, file });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('gcode-readout').textContent).toMatch('10 × 0 × 0.3 mm'),
+    );
+  });
+
+  it('takes the height from the slicer when the coordinates are not heights', async () => {
+    // A belt printer prints on a 45-degree belt, so its Z is not a height above the bed:
+    // the IdeaFormer fixture runs `G1 Y988.179 Z-987.979` and its highest coordinate is
+    // -988. The slicer still declares the true height in `;Z:`, which is what a layer's
+    // z is when the file announces one. Both are here so a formula that reads the
+    // coordinate cannot pass by accident.
+    fetchMock.mockResolvedValue(
+      respond(
+        [
+          'G90',
+          'M83',
+          ';LAYER_CHANGE',
+          ';Z:0.2',
+          'G1 X0 Y900 Z-900',
+          'G1 X10 E1',
+          ';LAYER_CHANGE',
+          ';Z:0.4',
+          'G1 X0 Y900.2 Z-899.8',
+          'G1 X10 E1',
+        ].join('\n'),
+      ),
+    );
+    render(GcodeViewer, { modelId: 7, file });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('gcode-readout').textContent).toMatch('10 × 0.2 × 0.4 mm'),
+    );
+  });
+
+  it('drops the previous print before parsing the next', async () => {
+    // Not after: the scene holds the previous toolpath's buffers, up to 204 MB of them
+    // at the segment cap, and keeping them through the next parse peaks at twice what
+    // the cap was chosen to allow. Two large plates of one project is the pair that
+    // reaches this. Ordering is the whole assertion - `clear` being called eventually
+    // is what the code did before.
+    const { rerender } = render(GcodeViewer, { modelId: 7, file });
+    await waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    clear.mockClear();
+    fetchMock.mockClear();
+
+    await rerender({ modelId: 7, file: { ...file, id: 13 } });
+
+    await waitFor(() => expect(clear).toHaveBeenCalledTimes(1));
+    expect(clear.mock.invocationCallOrder[0]).toBeLessThan(fetchMock.mock.invocationCallOrder[0]);
   });
 
   it('opens on the finished print, not on the first layer', async () => {

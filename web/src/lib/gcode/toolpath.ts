@@ -266,6 +266,8 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
   // in a second pass; see `Toolpath.bounds`.
   const min: [number, number, number] = [Infinity, Infinity, Infinity];
   const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  const travelMin: [number, number, number] = [Infinity, Infinity, Infinity];
+  const travelMax: [number, number, number] = [-Infinity, -Infinity, -Infinity];
 
   const layers: ToolpathLayer[] = [];
   const extrusion: Float32Array[] = [];
@@ -342,7 +344,11 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
     if (extrusionSegments === 0) {
       throw new Error(NO_TOOLPATHS);
     }
-    if (!finiteAsFloat32(min) || !finiteAsFloat32(max)) {
+    // The travel pair is only meaningful when something moved without extruding; a file
+    // with no travel at all leaves it at its infinite sentinel, which is not an overflow.
+    const travelOverflows =
+      travelSegments > 0 && (!finiteAsFloat32(travelMin) || !finiteAsFloat32(travelMax));
+    if (!finiteAsFloat32(min) || !finiteAsFloat32(max) || travelOverflows) {
       // A coordinate large enough to overflow a float32 - not something a slicer emits,
       // but a corrupt or truncated file can. It reaches the GPU as Infinity, which makes
       // the camera fit NaN and the panel silently blank, so refuse it here where there is
@@ -765,6 +771,10 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
    * Collecting them is what makes a file with no markers at all measurable: it splits
    * layers on Z instead, never anchors, and gating the widen on `anchored` reported
    * every such print as 0 x 0 x 0 mm.
+   *
+   * The travel pair is deliberately not reset with them. It measures nothing the reader
+   * sees - it exists only to catch a coordinate that overflows float32 - and every
+   * travel segment reaches the GPU whether it came before the first marker or after.
    */
   function anchor(): void {
     anchored = true;
@@ -815,13 +825,19 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
     if (extruding) extrusionSegments++;
     else travelSegments++;
 
-    // Travel is left out because it is where the nozzle went, not where the print is -
-    // a wipe to the back of the bed would report the bed's depth as the model's. Purge
-    // is left out for the same reason: PrusaSlicer's runs the full width of the plate.
-    if (extruding) widen(x0, y0, z0, x1, y1, z1);
+    // Travel is kept out of the print's bounds because it is where the nozzle went, not
+    // where the print is - a wipe to the back of the bed would report the bed's depth as
+    // the model's. Purge is left out for the same reason: PrusaSlicer's runs the full
+    // width of the plate. It gets its own pair anyway, used for nothing but the
+    // float32 overflow check at the end: travel positions go to the GPU too, so a
+    // coordinate the extrusion bounds never see can still reach it as Infinity.
+    if (extruding) widen(min, max, x0, y0, z0, x1, y1, z1);
+    else widen(travelMin, travelMax, x0, y0, z0, x1, y1, z1);
   }
 
   function widen(
+    min: number[],
+    max: number[],
     x0: number,
     y0: number,
     z0: number,
