@@ -138,6 +138,8 @@ const MINUS = 45;
 const PLUS = 43;
 const DOT = 46;
 const OPEN_PAREN = 40;
+const CLOSE_PAREN = 41;
+const SEMICOLON = 59;
 const ZERO = 48;
 const NINE = 57;
 const UPPER_A = 65;
@@ -390,8 +392,8 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
   }
 
   function handleLine(text: string, from: number, to: number): void {
-    const hash = text.indexOf(';', from);
-    if (hash >= 0 && hash < to) {
+    const hash = endOfCodeComment(text, from, to);
+    if (hash >= 0) {
       handleComment(text.slice(hash + 1, to));
       to = hash;
     }
@@ -465,6 +467,30 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
     }
 
     dispatch(cmdLetter, cmdValue);
+  }
+
+  /**
+   * Index of the `;` that starts the line's comment, or -1.
+   *
+   * A `;` inside a `(...)` comment is part of that comment, not the start of a second
+   * one - truncating there silently dropped every word after it, so `G1 X10 (foo; bar)
+   * Y20 E1` lost its Y and its E. The common line has no bracket at all, so the walk
+   * only runs when one opens before the semicolon: this is per line of a file that can
+   * run to a quarter of a gigabyte.
+   */
+  function endOfCodeComment(text: string, from: number, to: number): number {
+    const hash = text.indexOf(';', from);
+    if (hash < 0 || hash >= to) return -1;
+    const open = text.indexOf('(', from);
+    if (open < 0 || open > hash) return hash;
+    let depth = 0;
+    for (let i = from; i < to; i++) {
+      const c = text.charCodeAt(i);
+      if (c === OPEN_PAREN) depth++;
+      else if (c === CLOSE_PAREN) depth = depth > 0 ? depth - 1 : 0;
+      else if (c === SEMICOLON && depth === 0) return i;
+    }
+    return -1;
   }
 
   function readWord(text: string): boolean {
@@ -542,12 +568,7 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
         setPosition();
         return;
       case 28:
-        // Homing moves to a position the file never states - the endstop's, which depends
-        // on the firmware's build. Ignoring it drew the next move as a straight line from
-        // wherever the nozzle was before, a travel segment across the plate that the
-        // machine never made. Forgetting where the nozzle is instead is the same thing
-        // the parser already does at the start of a file.
-        positioned = false;
+        home();
         return;
       case 17:
         return;
@@ -698,6 +719,37 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
     px = x1;
     py = y1;
     pz = z1;
+  }
+
+  /**
+   * `G28` sends the homed axes to their endstops.
+   *
+   * Exactly which coordinate that is depends on the firmware's build, but a bed-origin
+   * cartesian homes X and Y to the bed's own zero - the origin this viewer already draws
+   * the plate from - and Z to the bed. Leaving the pre-home coordinates standing drew the
+   * next move from wherever the nozzle happened to be: a travel line across the plate the
+   * machine never made, or a first road starting in the wrong place. Any `G92` offset on
+   * a homed axis goes with it, because homing re-establishes the machine's own zero.
+   *
+   * Deliberately not a claim that the position is now known. Every fixture homes in its
+   * start block, before the file has said where anything is, and drawing the travel from
+   * the origin to the first move is the diagonal across the plate that the `G92 E0` rule
+   * above already exists to avoid.
+   */
+  function home(): void {
+    const all = !hasX && !hasY && !hasZ;
+    if (all || hasX) {
+      px = 0;
+      offsetX = 0;
+    }
+    if (all || hasY) {
+      py = 0;
+      offsetY = 0;
+    }
+    if (all || hasZ) {
+      pz = 0;
+      offsetZ = 0;
+    }
   }
 
   function setPosition(): void {

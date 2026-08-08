@@ -372,27 +372,61 @@ describe('positioning', () => {
     ]);
   });
 
-  it('forgets where the nozzle is when the file homes', () => {
-    // G28 moves to the endstop, a position the file never states. Drawing the next move
-    // from the pre-home point puts a travel line across the plate that the machine never
-    // made - here a diagonal from the end of the print back to X5.
+  it('puts the nozzle at the endstop when the file homes one axis', () => {
+    // G28 X sends X to the bed's zero and leaves Y alone. Ignoring it drew the travel
+    // from X50 - a line across the plate the machine never made, because it went home
+    // first.
     const parsed = parse(
-      [
-        'G21',
-        'G90',
-        'M83',
-        'G1 X0 Y0 Z0.2',
-        'G1 X50 Y50 E1',
-        'G28 X',
-        'G1 X5 Y50',
-        'G1 X9 Y50 E1',
-      ].join('\n'),
+      ['G21', 'G90', 'M83', 'G1 X0 Y0 Z0.2', 'G1 X50 Y50 E1', 'G28 X', 'G1 X5 Y50'].join(
+        '\n',
+      ),
     );
-    expect(rounded(parsed.travel)).toEqual([]);
+    expect(rounded(parsed.travel)).toEqual([[0, 50, 0.2, 5, 50, 0.2]]);
+  });
+
+  it('starts the road at the endstop when extrusion follows homing directly', () => {
+    // No intervening travel to establish a position, which is where the previous version
+    // of this fix was hiding: a rule that only skipped non-extruding moves left the road
+    // starting from the stale pre-home X50.
+    const parsed = parse(
+      ['G21', 'G90', 'M83', 'G1 X0 Y0 Z0.2', 'G1 X50 Y50 E1', 'G28 X', 'G1 X9 Y50 E1'].join(
+        '\n',
+      ),
+    );
     expect(rounded(parsed.extrusion)).toEqual([
       [0, 0, 0.2, 50, 50, 0.2],
-      [5, 50, 0.2, 9, 50, 0.2],
+      [0, 50, 0.2, 9, 50, 0.2],
     ]);
+  });
+
+  it('homes every axis when G28 names none', () => {
+    // The bare form is what the fixtures actually emit. Homing only the named axes would
+    // make it a no-op, which is the shape the first version of this had.
+    const parsed = parse(
+      ['G21', 'G90', 'M83', 'G1 X0 Y0 Z0.2', 'G1 X50 Y50 E1', 'G28', 'G1 X5 Y50 Z0.2'].join(
+        '\n',
+      ),
+    );
+    expect(rounded(parsed.travel)).toEqual([[0, 0, 0, 5, 50, 0.2]]);
+  });
+
+  it('clears a G92 offset on the axis it homes', () => {
+    // G92 shifts the coordinate system; homing re-establishes the machine's own zero, so
+    // the shift cannot survive it. Keeping the offset put the next move 50 mm out.
+    const parsed = parse(
+      ['G21', 'G90', 'M83', 'G1 X10 Y0 Z0.2', 'G92 X0', 'G28 X', 'G1 X5 Y0 E1'].join('\n'),
+    );
+    expect(rounded(parsed.extrusion)).toEqual([[0, 0, 0.2, 5, 0, 0.2]]);
+  });
+
+  it('keeps a bracketed comment that contains a semicolon out of the G-code', () => {
+    // The semicolon inside the brackets is part of that comment, not the start of a new
+    // one. Cutting the line there dropped every word after it, so this move lost its Y
+    // and its E and became a straight run along X.
+    const parsed = parse(
+      ['G21', 'G90', 'M83', 'G1 X0 Y0 Z0.2', 'G1 X10 (wipe; then prime) Y20 E1'].join('\n'),
+    );
+    expect(rounded(parsed.extrusion)).toEqual([[0, 0, 0.2, 10, 20, 0.2]]);
   });
 
   it('does not take a bare G92 E0 as a statement about XY', () => {

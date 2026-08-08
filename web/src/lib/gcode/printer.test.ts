@@ -168,7 +168,12 @@ describe('toolpathColor', () => {
   it.each([
     { name: 'a bed wider than ten metres', bed: { maxXMm: 1e300 } },
     { name: 'a bed taller than ten metres', bed: { heightMm: 1e300 } },
-    { name: 'an origin further than ten metres out', bed: { minXMm: -1e300, maxXMm: 1e300 } },
+    {
+      name: 'an origin further than ten metres out',
+      // A believable 250 mm bed, just parked past the limit: the width check alone lets
+      // this through, so it is the origin guard or nothing.
+      bed: { minXMm: 50_000, maxXMm: 50_250 },
+    },
   ])('assumes a volume rather than believing $name', ({ bed }) => {
     // `1e300` is finite, so the server's own finite check passes it, but the plate goes
     // to the GPU as Float32 where anything past ~3.4e38 is Infinity - and the camera fit
@@ -179,8 +184,7 @@ describe('toolpathColor', () => {
       buildVolume: { minXMm: 0, minYMm: 0, maxXMm: 250, maxYMm: 210, heightMm: 210, ...bed },
     });
     expect(printer.known).toBe(false);
-    expect(printer.volume.x).toBeLessThanOrEqual(10_000);
-    expect(printer.volume.z).toBeLessThanOrEqual(10_000);
+    expect(printer.volume).toEqual(DEFAULT_VOLUME);
   });
 });
 
@@ -231,10 +235,12 @@ describe('volumeFor', () => {
   });
 
   it('keeps the grid for a print taller than the volume it assumed', () => {
-    // An unrecognised printer gets a 256-cubed guess. A 300 mm print on a real 400 mm
-    // machine has not changed coordinate frames - the guess is just short, and the bed
-    // outline is still where the bed is.
-    const volume = volumeFor(printer, { min: [60, 60, 0.2], max: [110, 110, 300] });
-    expect(volume).toEqual(printer.volume);
+    // An unrecognised printer gets a 256-cubed guess, so a 300 mm print on a real 400 mm
+    // machine is ordinary. It has not changed coordinate frames - the guess is just
+    // short, and the bed outline is still where the bed is.
+    const assumed = resolvePrinter({ printerModel: 'Some Machine Nobody Has Heard Of' });
+    expect(assumed.known).toBe(false);
+    const volume = volumeFor(assumed, { min: [60, 60, 0.2], max: [110, 110, 300] });
+    expect(volume).toEqual(assumed.volume);
   });
 });
