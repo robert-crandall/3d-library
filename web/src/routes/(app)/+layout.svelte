@@ -7,6 +7,12 @@
   // Read once for the whole signed-in app, here rather than on each page,
   // because the sidebar is in this layout and outlives every navigation. Pages
   // call library.refresh() again when they change something a count depends on.
+  //
+  // The reset is for the second sign-in in one tab: this layout unmounts on the
+  // way out to /login and mounts again on the way back, but the store is module
+  // state that survives both, so entering the app has to start from nothing
+  // rather than from whoever was here before.
+  library.reset();
   library.refresh();
 </script>
 

@@ -77,6 +77,30 @@ describe('TaxonomySection', () => {
     expect((screen.getByLabelText('New category name') as HTMLInputElement).value).toBe('Toys');
   });
 
+  // openapi-fetch resolves with `error` for a refusal but rejects when the
+  // request never happens at all. Without the finally, that rejection leaves
+  // every control in the section disabled until the page is reloaded, and the
+  // user is told nothing about why.
+  it('recovers when the request never reaches the server', async () => {
+    post.mockRejectedValue(new TypeError('Failed to fetch'));
+    open();
+
+    const field = screen.getByLabelText('New category name');
+    await fireEvent.input(field, { target: { value: 'Spares' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Could not reach the server');
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false)
+    );
+
+    // And the retry actually goes out, which is the whole point of not being
+    // stuck: one call for the failure, one for the second attempt.
+    post.mockResolvedValue({ data: { id: 9 } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+  });
+
   it('renames in place and sends the id it was given', async () => {
     put.mockResolvedValue({ data: { id: 3 } });
     open();

@@ -53,21 +53,30 @@
     return colors ? { name: name.trim(), color } : { name: name.trim() };
   }
 
+  // Each of the three wraps its request in try/finally. openapi-fetch reports a
+  // 4xx by resolving with `error`, but it lets a fetch-level rejection through -
+  // and without the finally that rejection would leave `busy` true, so every
+  // control in the section stays disabled until the page is reloaded.
   async function create(event: SubmitEvent) {
     event.preventDefault();
     if (busy || name.trim() === '') return;
     busy = true;
     error = '';
-    const { error: failure } = await api.POST(path as Any, { body: body() as never });
-    busy = false;
-    // The server's words, not ours: it is the only thing that knows the name is
-    // already taken, and its message already says so.
-    if (failure) {
-      error = apiErrorMessage(failure, `Could not add the ${singular}.`);
-      return;
+    try {
+      const { error: failure } = await api.POST(path as Any, { body: body() as never });
+      // The server's words, not ours: it is the only thing that knows the name
+      // is already taken, and its message already says so.
+      if (failure) {
+        error = apiErrorMessage(failure, `Could not add the ${singular}.`);
+        return;
+      }
+      name = '';
+      await library.refresh();
+    } catch {
+      error = 'Could not reach the server.';
+    } finally {
+      busy = false;
     }
-    name = '';
-    await library.refresh();
   }
 
   async function rename() {
@@ -75,17 +84,24 @@
     if (!row || busy || editName.trim() === '') return;
     busy = true;
     error = '';
-    const { error: failure } = await api.PUT(`${path}/{id}` as `${Any}/{id}`, {
-      params: { path: { id: row.id } },
-      body: (colors ? { name: editName.trim(), color: editColor } : { name: editName.trim() }) as never
-    });
-    busy = false;
-    if (failure) {
-      error = apiErrorMessage(failure, 'Could not save the change.');
-      return;
+    try {
+      const { error: failure } = await api.PUT(`${path}/{id}` as `${Any}/{id}`, {
+        params: { path: { id: row.id } },
+        body: (colors
+          ? { name: editName.trim(), color: editColor }
+          : { name: editName.trim() }) as never
+      });
+      if (failure) {
+        error = apiErrorMessage(failure, 'Could not save the change.');
+        return;
+      }
+      editing = null;
+      await library.refresh();
+    } catch {
+      error = 'Could not reach the server.';
+    } finally {
+      busy = false;
     }
-    editing = null;
-    await library.refresh();
   }
 
   async function remove() {
@@ -93,16 +109,21 @@
     if (!row || busy) return;
     busy = true;
     error = '';
-    const { error: failure } = await api.DELETE(`${path}/{id}` as `${Any}/{id}`, {
-      params: { path: { id: row.id } }
-    });
-    busy = false;
-    if (failure) {
-      error = apiErrorMessage(failure, 'Could not delete it.');
-      return;
+    try {
+      const { error: failure } = await api.DELETE(`${path}/{id}` as `${Any}/{id}`, {
+        params: { path: { id: row.id } }
+      });
+      if (failure) {
+        error = apiErrorMessage(failure, 'Could not delete it.');
+        return;
+      }
+      deleting = null;
+      await library.refresh();
+    } catch {
+      error = 'Could not reach the server.';
+    } finally {
+      busy = false;
     }
-    deleting = null;
-    await library.refresh();
   }
 </script>
 

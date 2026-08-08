@@ -11,7 +11,8 @@ vi.mock('$app/state', () => ({
     }
   }
 }));
-vi.mock('$lib/api/client', () => ({ api: { GET: vi.fn(async () => ({ data: [] })) } }));
+const get = vi.fn((..._args: unknown[]) => Promise.resolve({ data: [] as unknown }));
+vi.mock('$lib/api/client', () => ({ api: { GET: (...args: unknown[]) => get(...args) } }));
 
 import LibrarySidebar from './LibrarySidebar.svelte';
 import { library } from '$lib/library.svelte';
@@ -105,14 +106,42 @@ describe('LibrarySidebar', () => {
   });
 
   // A stale list is worse than a missing one: it would be a category tree the
-  // user could click, filtering by things that may no longer exist.
-  it('says so when the taxonomy could not be read', () => {
+  // user could click, filtering by things that may no longer exist. Driving the
+  // failure through refresh() rather than assigning `error` is the point - the
+  // question is what a failed read leaves on screen, not what the flag renders.
+  it('drops what it was showing when the taxonomy could not be read', async () => {
     url = new URL('http://localhost/');
     fill();
-    library.error = 'Could not reach the server.';
+    get.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    await library.refresh();
     render(LibrarySidebar);
 
     expect(screen.getByRole('alert').textContent).toContain('Could not reach the server');
-    library.error = '';
+    expect(screen.queryByRole('link', { name: /Functional/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /petg/ })).toBeNull();
+    library.reset();
+  });
+
+  // Two deletes in a row are two refreshes, and the first can answer last.
+  // Without a guard the sidebar would settle on the list from before the second
+  // delete, showing a row the user just removed.
+  it('keeps the newest refresh when an older one answers late', async () => {
+    type Answer = (value: { data: unknown }) => void;
+    const answers: Answer[] = [];
+    get.mockImplementation(
+      () => new Promise<{ data: unknown }>((resolve) => answers.push(resolve))
+    );
+
+    const stale = library.refresh();
+    const fresh = library.refresh();
+    // Four endpoints per refresh, so the first four resolvers are the stale one.
+    answers.slice(4).forEach((resolve) => resolve({ data: [{ id: 4, name: 'Toys', color: '#ec4899', modelCount: 2 }] }));
+    await fresh;
+    answers.slice(0, 4).forEach((resolve) => resolve({ data: [{ id: 3, name: 'Functional', color: '#3b82f6', modelCount: 12 }] }));
+    await stale;
+
+    expect(library.categories.map((c) => c.name)).toEqual(['Toys']);
+    get.mockImplementation((..._args: unknown[]) => Promise.resolve({ data: [] as unknown }));
+    library.reset();
   });
 });

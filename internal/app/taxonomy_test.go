@@ -113,12 +113,19 @@ func TestTaxonomyRoundTrips(t *testing.T) {
 
 	for _, tc := range []struct {
 		what, path, create, rename string
+		// What the list must say afterwards. A rename that returns 200 and
+		// writes nothing passes a test that only looks at the status code and
+		// at whether the id is still there, so name the values instead.
+		wantAfter []string
 	}{
 		{"category", "/api/categories",
 			`{"name":"Functional","color":"#2563eb"}`,
-			`{"name":"Functional parts","color":"#16a34a"}`},
-		{"tag", "/api/tags", `{"name":"benchy"}`, `{"name":"boat"}`},
-		{"material", "/api/materials", `{"name":"PCTG"}`, `{"name":"PC"}`},
+			`{"name":"Functional parts","color":"#16a34a"}`,
+			[]string{`"name":"Functional parts"`, `"color":"#16a34a"`}},
+		{"tag", "/api/tags", `{"name":"benchy"}`, `{"name":"boat"}`,
+			[]string{`"name":"boat"`}},
+		{"material", "/api/materials", `{"name":"PCTG"}`, `{"name":"PC"}`,
+			[]string{`"name":"PC"`}},
 	} {
 		resp, body := c.createTaxonomy(tc.path, tc.create)
 		if resp.StatusCode != http.StatusCreated {
@@ -147,6 +154,14 @@ func TestTaxonomyRoundTrips(t *testing.T) {
 		}
 		if !strings.Contains(body, `"id":`+fmt.Sprint(created.ID)) {
 			t.Errorf("%s list is missing the row it just made: %s", tc.what, body)
+		}
+		for _, want := range tc.wantAfter {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s list does not show %s after the rename: %s", tc.what, want, body)
+			}
+		}
+		if strings.Contains(body, `"name":"`+created.Name+`"`) {
+			t.Errorf("%s list still shows the old name %q: %s", tc.what, created.Name, body)
 		}
 
 		resp, body = c.send(http.MethodDelete, one, "")
@@ -816,4 +831,22 @@ func TestTaxonomyNamesAreRefusedWhenEmpty(t *testing.T) {
 	if created.Name != "spaced" {
 		t.Errorf("name was stored as %q", created.Name)
 	}
+
+	// The cap counts characters, not bytes. Sixty CJK characters are 180 bytes,
+	// so a byte-counting cap would refuse a name that is exactly at the limit -
+	// and the user has no way to tell why, because the message says characters.
+	long := strings.Repeat("\u5bff", maxTaxonomyNameLen)
+	resp, body := c.send(http.MethodPost, "/api/tags", `{"name":"`+long+`"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("a %d character name was refused: got %d: %s", maxTaxonomyNameLen, resp.StatusCode, body)
+	}
+	tooLong := strings.Repeat("\u5bff", maxTaxonomyNameLen+1)
+	resp, body = c.send(http.MethodPost, "/api/tags", `{"name":"`+tooLong+`"}`)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("a %d character name was accepted: got %d: %s", maxTaxonomyNameLen+1, resp.StatusCode, body)
+	}
 }
+
+// The service and the OpenAPI schema each declare this number; the test needs
+// it too, and a third copy that drifts is worse than a constant.
+const maxTaxonomyNameLen = 60

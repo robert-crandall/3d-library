@@ -36,7 +36,30 @@ class Library {
   error = $state('');
   loaded = $state(false);
 
+  /** Bumped by every refresh and every reset, so a response can tell whether
+   *  it is still the answer to the question being asked. */
+  #generation = 0;
+
+  /**
+   * Forget everything.
+   *
+   * This is a module singleton, so it outlives sign-out: `goto('/login')` is a
+   * client-side navigation and nothing reloads the page. Without this, the next
+   * person to sign in on the same tab would see the previous one's categories
+   * until the first GET landed.
+   */
+  reset() {
+    this.#generation++;
+    this.categories = [];
+    this.tags = [];
+    this.materials = [];
+    this.counts = { models: 0, uncategorized: 0 };
+    this.error = '';
+    this.loaded = false;
+  }
+
   async refresh() {
+    const generation = ++this.#generation;
     try {
       const [categories, tags, materials, counts] = await Promise.all([
         api.GET('/api/categories'),
@@ -44,10 +67,14 @@ class Library {
         api.GET('/api/materials'),
         api.GET('/api/library/counts')
       ]);
+      // Two refreshes can be in flight at once - delete a tag, then delete
+      // another before the first reply arrives - and they can land in either
+      // order. Only the newest one is still the truth.
+      if (generation !== this.#generation) return;
       const failure =
         categories.error ?? tags.error ?? materials.error ?? counts.error;
       if (failure) {
-        this.error = apiErrorMessage(failure, 'Could not load categories and tags.');
+        this.#fail(apiErrorMessage(failure, 'Could not load categories and tags.'));
         return;
       }
       this.categories = categories.data ?? [];
@@ -57,8 +84,21 @@ class Library {
       this.error = '';
       this.loaded = true;
     } catch {
-      this.error = 'Could not reach the server.';
+      if (generation !== this.#generation) return;
+      this.#fail('Could not reach the server.');
     }
+  }
+
+  /** Show the failure and drop what was on screen. Keeping the old lists would
+   *  offer links to categories that may since have been deleted, next to a
+   *  message saying we do not know what the categories are. */
+  #fail(message: string) {
+    this.categories = [];
+    this.tags = [];
+    this.materials = [];
+    this.counts = { models: 0, uncategorized: 0 };
+    this.error = message;
+    this.loaded = false;
   }
 }
 

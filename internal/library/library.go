@@ -682,7 +682,7 @@ func (s *Service) List(ctx context.Context, userID int64, f Filter) ([]Model, er
 	if err := s.resolveListThumbnails(ctx, models, pins); err != nil {
 		return nil, err
 	}
-	if err := s.resolveListCategories(ctx, models, categories); err != nil {
+	if err := s.resolveListCategories(ctx, userID, models, categories); err != nil {
 		return nil, err
 	}
 	return models, nil
@@ -762,10 +762,10 @@ func (s *Service) Get(ctx context.Context, userID, id int64) (ModelDetail, error
 	if err := s.loadFiles(ctx, &m); err != nil {
 		return ModelDetail{}, err
 	}
-	if err := s.loadCategory(ctx, &m, categoryID); err != nil {
+	if err := s.loadCategory(ctx, userID, &m, categoryID); err != nil {
 		return ModelDetail{}, err
 	}
-	if err := s.loadLabels(ctx, &m); err != nil {
+	if err := s.loadLabels(ctx, userID, &m); err != nil {
 		return ModelDetail{}, err
 	}
 	resolveThumbnail(&m, pinned)

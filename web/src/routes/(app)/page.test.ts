@@ -1,20 +1,15 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import LibraryPage from './+page.svelte';
+import { nav } from '$lib/testing/nav.svelte';
 
 const get = vi.fn();
 vi.mock('$lib/api/client', () => ({ api: { GET: (...args: unknown[]) => get(...args) } }));
 
 // The filter is the URL's, so a test that wants a filtered library says so by
-// setting the URL rather than by poking at component state.
-let url = new URL('http://localhost/');
-vi.mock('$app/state', () => ({
-  page: {
-    get url() {
-      return url;
-    }
-  }
-}));
+// setting the URL rather than by poking at component state. `nav` is reactive,
+// so assigning to it mid-test is a navigation the page notices.
+vi.mock('$app/state', async () => ({ page: (await import('$lib/testing/nav.svelte')).nav }));
 
 const model = {
   id: 1,
@@ -37,7 +32,7 @@ function modelReads() {
 
 describe('library page', () => {
   beforeEach(() => {
-    url = new URL('http://localhost/');
+    nav.url = new URL('http://localhost/');
   });
 
   it('renders a tile per model with its name, file count and size', async () => {
@@ -243,11 +238,11 @@ describe('library page', () => {
 // the link said. Anything else would need the two to agree by other means.
 describe('library page filtering', () => {
   beforeEach(() => {
-    url = new URL('http://localhost/');
+    nav.url = new URL('http://localhost/');
   });
 
   it('asks the server for exactly the filter in the URL', async () => {
-    url = new URL('http://localhost/?categoryId=3&tagId=8');
+    nav.url = new URL('http://localhost/?categoryId=3&tagId=8');
     get.mockResolvedValue({ data: [] });
     render(LibraryPage);
 
@@ -258,7 +253,7 @@ describe('library page filtering', () => {
   // empty state here would be a lie plus an Upload button that adds a model
   // this filter would not show.
   it('separates an empty filter from an empty library', async () => {
-    url = new URL('http://localhost/?uncategorized=true');
+    nav.url = new URL('http://localhost/?uncategorized=true');
     get.mockResolvedValue({ data: [] });
     render(LibraryPage);
 
@@ -271,12 +266,42 @@ describe('library page filtering', () => {
   // library look the same, and the user reads three tiles as their whole
   // collection.
   it('names the active filter and offers a way out of it', async () => {
-    url = new URL('http://localhost/?uncategorized=true');
+    nav.url = new URL('http://localhost/?uncategorized=true');
     get.mockResolvedValue({ data: [model] });
     render(LibraryPage);
 
     expect(await screen.findByRole('heading', { name: 'Uncategorized' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Clear filter' }).getAttribute('href')).toBe('/');
+  });
+
+  // Two clicks in the sidebar are two GETs, and the second can answer first.
+  // Without a guard the grid ends up showing the first filter's models under the
+  // second filter's heading, which is the worst kind of wrong: it looks right.
+  it('keeps the newest filter when an older answer arrives late', async () => {
+    const pending: Record<string, (value: unknown) => void> = {};
+    get.mockImplementation((path: string) =>
+      String(path).startsWith('/api/models')
+        ? new Promise((resolve) => (pending[String(path)] = resolve))
+        : Promise.resolve({ data: [] })
+    );
+
+    nav.url = new URL('http://localhost/?categoryId=3');
+    render(LibraryPage);
+    await waitFor(() => expect(pending['/api/models?categoryId=3']).toBeTruthy());
+
+    nav.url = new URL('http://localhost/?categoryId=4');
+    await waitFor(() => expect(pending['/api/models?categoryId=4']).toBeTruthy());
+
+    pending['/api/models?categoryId=4']({ data: [{ ...model, id: 2, name: 'Toys model' }] });
+    expect(await screen.findByRole('heading', { name: 'Toys model' })).toBeTruthy();
+
+    pending['/api/models?categoryId=3']({ data: [{ ...model, name: 'Functional model' }] });
+    // One turn of the event loop is all the stale reply needs to overwrite the
+    // grid, so wait for it rather than asserting straight away.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByRole('heading', { name: 'Functional model' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Toys model' })).toBeTruthy();
   });
 
   it('offers no way out when nothing is filtered', async () => {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -88,7 +89,9 @@ func cleanName(name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("%w: a name is required", errInvalid)
 	}
-	if len(name) > maxNameLen {
+	// Runes, not bytes: the limit is a limit on what the user typed, and
+	// len() would refuse 21 emoji or 30 CJK characters as "too long".
+	if utf8.RuneCountInString(name) > maxNameLen {
 		return "", fmt.Errorf("%w: a name may be at most %d characters", errInvalid, maxNameLen)
 	}
 	return name, nil
@@ -371,14 +374,18 @@ func (s *Service) Counts(ctx context.Context, userID int64) (Counts, error) {
 
 // loadCategory fills in a model's category, leaving it nil when the model is
 // uncategorized.
-func (s *Service) loadCategory(ctx context.Context, m *ModelDetail, categoryID *int64) error {
+func (s *Service) loadCategory(ctx context.Context, userID int64, m *ModelDetail, categoryID *int64) error {
 	m.Category = nil
 	if categoryID == nil {
 		return nil
 	}
 	var c Category
+	// user_id is in the statement even though the write path already refuses to
+	// point a model at someone else's category. Owner scoping that depends on
+	// another query having been correct is not owner scoping, and this is a read
+	// that reaches a second table on a user-supplied model id.
 	err := s.db.QueryRow(ctx,
-		`SELECT id, name, color FROM categories WHERE id = $1`, *categoryID,
+		`SELECT id, name, color FROM categories WHERE id = $1 AND user_id = $2`, *categoryID, userID,
 	).Scan(&c.ID, &c.Name, &c.Color)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The foreign key makes this unreachable; if it ever happens the model
@@ -394,25 +401,25 @@ func (s *Service) loadCategory(ctx context.Context, m *ModelDetail, categoryID *
 
 // loadLabels fills in a model's tags and materials. Both are set to empty
 // slices first, so a model with none encodes as [] rather than null.
-func (s *Service) loadLabels(ctx context.Context, m *ModelDetail) error {
+func (s *Service) loadLabels(ctx context.Context, userID int64, m *ModelDetail) error {
 	var err error
-	if m.Tags, err = s.labelsFor(ctx, m.ID,
+	if m.Tags, err = s.labelsFor(ctx, userID, m.ID,
 		`SELECT t.id, t.name FROM tags t
 		   JOIN model_tags mt ON mt.tag_id = t.id
-		  WHERE mt.model_id = $1 ORDER BY lower(t.name)`, "tags"); err != nil {
+		  WHERE mt.model_id = $1 AND t.user_id = $2 ORDER BY lower(t.name)`, "tags"); err != nil {
 		return err
 	}
-	if m.Materials, err = s.labelsFor(ctx, m.ID,
+	if m.Materials, err = s.labelsFor(ctx, userID, m.ID,
 		`SELECT mt.id, mt.name FROM materials mt
 		   JOIN model_materials mm ON mm.material_id = mt.id
-		  WHERE mm.model_id = $1 ORDER BY lower(mt.name)`, "materials"); err != nil {
+		  WHERE mm.model_id = $1 AND mt.user_id = $2 ORDER BY lower(mt.name)`, "materials"); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *Service) labelsFor(ctx context.Context, modelID int64, query, what string) ([]Label, error) {
-	rows, err := s.db.Query(ctx, query, modelID)
+func (s *Service) labelsFor(ctx context.Context, userID, modelID int64, query, what string) ([]Label, error) {
+	rows, err := s.db.Query(ctx, query, modelID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("library: load %s: %w", what, err)
 	}
@@ -438,7 +445,7 @@ func (s *Service) labelsFor(ctx context.Context, modelID int64, query, what stri
 // resolveListThumbnails. It cannot join into the list query, which GROUPs
 // models down to one row each: adding the category's columns there would mean
 // adding them to the GROUP BY too, and the aggregate is already doing enough.
-func (s *Service) resolveListCategories(ctx context.Context, models []Model, categoryIDs map[int64]*int64) error {
+func (s *Service) resolveListCategories(ctx context.Context, userID int64, models []Model, categoryIDs map[int64]*int64) error {
 	wanted := []int64{}
 	seen := map[int64]bool{}
 	for _, id := range categoryIDs {
@@ -452,7 +459,7 @@ func (s *Service) resolveListCategories(ctx context.Context, models []Model, cat
 	}
 
 	rows, err := s.db.Query(ctx,
-		`SELECT id, name, color FROM categories WHERE id = ANY($1)`, wanted)
+		`SELECT id, name, color FROM categories WHERE id = ANY($1) AND user_id = $2`, wanted, userID)
 	if err != nil {
 		return fmt.Errorf("library: list categories for models: %w", err)
 	}

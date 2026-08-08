@@ -39,7 +39,16 @@
   // everything already in the library disappears instead. Waiting costs one
   // fast GET and removes both.
 
+  // Which load is the current one. Clicking two categories quickly starts two
+  // GETs, and the second can answer first: without this the grid would end up
+  // showing the first category's models under the second's heading, because the
+  // heading comes from the URL and the models come from whichever reply landed
+  // last. A counter rather than an AbortController because the stale reply is
+  // harmless once ignored, and this is four lines.
+  let generation = 0;
+
   async function load(search: string) {
+    const mine = ++generation;
     // Back to loading for the duration, not just on the first call. Without
     // this a reload keeps the page in `ready` while the GET is in flight, which
     // leaves Upload enabled over a library that is being re-read precisely
@@ -52,6 +61,7 @@
       // rebuilding it from three optional values here would be a second place
       // for the two to disagree.
       const { data, error: failure } = await api.GET(`/api/models${search}` as '/api/models');
+      if (mine !== generation) return;
       if (failure) {
         error = apiErrorMessage(failure, 'Could not load the library.');
         status = 'failed';
@@ -60,6 +70,7 @@
       models = data ?? [];
       status = 'ready';
     } catch {
+      if (mine !== generation) return;
       // openapi-fetch lets a fetch-level rejection through, so without this the
       // page would sit on "Loading…" forever.
       error = 'Could not reach the server.';
