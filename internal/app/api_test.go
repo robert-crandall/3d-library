@@ -2,7 +2,6 @@ package app_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,13 +9,11 @@ import (
 	"testing"
 
 	"github.com/robert-crandall/go-home-server/auth"
-	"github.com/robert-crandall/go-home-server/db"
-	"github.com/robert-crandall/go-home-server/files"
-	"github.com/robert-crandall/go-home-server/migrations"
 	"github.com/robert-crandall/go-home-server/notify"
 	"github.com/robert-crandall/go-home-server/server"
 
 	"github.com/robert-crandall/3d-library/internal/app"
+	"github.com/robert-crandall/3d-library/internal/library"
 )
 
 // The exact strings the login page renders. The SPA shows the server's `detail`
@@ -35,26 +32,7 @@ func TestAuthRefusalStrings(t *testing.T) {
 		t.Skip("TEST_DATABASE_URL is not set")
 	}
 
-	ctx := context.Background()
-	if err := db.Migrate(url, db.MigrationSource{
-		FS:        migrations.FS,
-		Dir:       migrations.Dir,
-		TableName: migrations.TableName,
-	}); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	pool, err := db.New(ctx, url)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	t.Cleanup(pool.Close)
-
-	// Start from nothing, so "the first account" means what it says however
-	// this database was left by a previous run.
-	if _, err := pool.Exec(ctx, "TRUNCATE users CASCADE"); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
+	pool := testPool(t, url)
 
 	newServer := func(openRegistration bool) *httptest.Server {
 		t.Helper()
@@ -65,9 +43,9 @@ func TestAuthRefusalStrings(t *testing.T) {
 		if err != nil {
 			t.Fatalf("notify: %v", err)
 		}
-		filesSvc, err := files.NewService(pool, files.Options{Dir: t.TempDir()})
+		librarySvc, err := library.NewService(pool, library.Options{Dir: t.TempDir()})
 		if err != nil {
-			t.Fatalf("files: %v", err)
+			t.Fatalf("library: %v", err)
 		}
 
 		srv := server.New(server.Options{
@@ -76,7 +54,7 @@ func TestAuthRefusalStrings(t *testing.T) {
 			Middlewares: []func(http.Handler) http.Handler{authSvc.Middleware},
 			HumaConfig:  authSvc.TokenHumaConfig,
 		})
-		if err := app.RegisterRoutes(srv.API, app.Deps{Auth: authSvc, Notify: notifySvc, Files: filesSvc}); err != nil {
+		if err := app.RegisterRoutes(srv.API, app.Deps{Auth: authSvc, Notify: notifySvc, Library: librarySvc}); err != nil {
 			t.Fatalf("register routes: %v", err)
 		}
 

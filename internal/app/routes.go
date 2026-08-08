@@ -12,9 +12,9 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/robert-crandall/3d-library/internal/library"
 	"github.com/robert-crandall/go-home-server/apisec"
 	"github.com/robert-crandall/go-home-server/auth"
-	"github.com/robert-crandall/go-home-server/files"
 	"github.com/robert-crandall/go-home-server/notify"
 )
 
@@ -30,10 +30,10 @@ const (
 type Deps struct {
 	Auth   *auth.Service
 	Notify *notify.Service
-	// Files is nil for an app that doesn't store files. cmd/server leaves it
-	// nil when UPLOAD_DIR is unset, and RegisterRoutes then mounts no file
-	// endpoints at all.
-	Files *files.Service
+	// Library is the model store. Unlike the foundation's optional generic
+	// file service it is required: uploading and browsing models is what this
+	// app is, so a deployment without it has nothing to serve.
+	Library *library.Service
 	// Google is nil for a password-only app, which is the default. cmd/server
 	// fills it in when any GOOGLE_* variable is set, and RegisterRoutes then
 	// mounts /api/auth/google/{start,callback}.
@@ -61,14 +61,11 @@ func RegisterRoutes(api huma.API, deps Deps) error {
 	}
 	notify.Register(api, deps.Notify, currentUser)
 
-	// Uploads are optional. cmd/openapi always passes a real files service, so
-	// the committed spec keeps describing the whole template; a deployment with
-	// UPLOAD_DIR unset serves a subset of it.
-	if deps.Files != nil {
-		files.Register(api, deps.Files, currentUser)
-	}
+	// The library is required, not optional: it is the app. RegisterRoutes only
+	// describes routes, so a nil pool inside the service is fine here.
+	library.Register(api, deps.Library, currentUser)
 
-	// Google sign-in, same story: optional, and always in the committed spec
+	// Google sign-in: optional, and always in the committed spec
 	// because cmd/openapi always passes a config.
 	if deps.Google != nil {
 		if err := deps.Auth.RegisterGoogle(api, *deps.Google); err != nil {

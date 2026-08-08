@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/robert-crandall/3d-library/internal/library"
 	"github.com/robert-crandall/go-home-server/auth"
-	"github.com/robert-crandall/go-home-server/files"
 	"github.com/robert-crandall/go-home-server/notify"
 	"github.com/robert-crandall/go-home-server/server"
 )
@@ -16,11 +16,11 @@ import (
 //
 // The services still have to be constructed rather than left nil: huma reads
 // method values off them at registration time. dir must be a writable directory
-// - files.NewService stats it and write-probes it - so callers pass a temp dir.
+// - library.NewService stats it and write-probes it - so callers pass a temp dir.
 func SpecModeDeps(dir string) (Deps, error) {
-	filesSvc, err := files.NewService(nil, files.Options{Dir: dir})
+	librarySvc, err := library.NewService(nil, library.Options{Dir: dir})
 	if err != nil {
-		return Deps{}, fmt.Errorf("files: %w", err)
+		return Deps{}, fmt.Errorf("library: %w", err)
 	}
 
 	// An empty VAPID config skips key validation, which is what we want: the
@@ -31,9 +31,9 @@ func SpecModeDeps(dir string) (Deps, error) {
 	}
 
 	return Deps{
-		Auth:   auth.NewService(nil, true),
-		Notify: notifySvc,
-		Files:  filesSvc,
+		Auth:    auth.NewService(nil, true),
+		Notify:  notifySvc,
+		Library: librarySvc,
 		// Placeholder credentials, never dialled: spec mode registers routes
 		// and stops. newGoogleAuth only insists that all three are non-empty
 		// (the success/failure paths default to "/" and "/login"), so this is

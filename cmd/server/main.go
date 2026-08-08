@@ -1,10 +1,10 @@
 // Command server is the app: it loads config, applies the foundation's shared
-// migrations, wires auth, web push, and file uploads onto one huma API, and
-// serves that API alongside the embedded SPA on a single port.
+// migrations and this app's own, wires auth, web push, and the model library
+// onto one huma API, and serves that API alongside the embedded SPA on a single
+// port.
 //
-// It starts life as a copy of go-home-server's examples/minimal/main.go, with
-// the SPA wired in. Routes live in internal/app so cmd/openapi can generate the
-// committed spec from the same registration - add your own there.
+// Routes live in internal/app so cmd/openapi can generate the committed spec
+// from the same registration.
 package main
 
 import (
@@ -17,12 +17,13 @@ import (
 	"github.com/robert-crandall/go-home-server/auth"
 	"github.com/robert-crandall/go-home-server/config"
 	"github.com/robert-crandall/go-home-server/db"
-	"github.com/robert-crandall/go-home-server/files"
-	"github.com/robert-crandall/go-home-server/migrations"
+	sharedmigrations "github.com/robert-crandall/go-home-server/migrations"
 	"github.com/robert-crandall/go-home-server/notify"
 	"github.com/robert-crandall/go-home-server/server"
 
 	"github.com/robert-crandall/3d-library/internal/app"
+	"github.com/robert-crandall/3d-library/internal/library"
+	"github.com/robert-crandall/3d-library/migrations"
 	"github.com/robert-crandall/3d-library/web"
 )
 
@@ -47,15 +48,20 @@ func main() {
 
 	ctx := context.Background()
 
-	// Each migration source tracks its own goose version table, so an app's own
-	// migrations can also start at 00001. A real app adds a second source:
-	//
-	//	db.MigrationSource{FS: myapp.MigrationsFS, Dir: "migrations"}
-	if err := db.Migrate(cfg.DatabaseURL, db.MigrationSource{
-		FS:        migrations.FS,
-		Dir:       migrations.Dir,
-		TableName: migrations.TableName,
-	}); err != nil {
+	// Each source tracks its own goose version table, which is why this app's
+	// migrations can also start at 00001 without colliding with the shared set.
+	if err := db.Migrate(cfg.DatabaseURL,
+		db.MigrationSource{
+			FS:        sharedmigrations.FS,
+			Dir:       sharedmigrations.Dir,
+			TableName: sharedmigrations.TableName,
+		},
+		db.MigrationSource{
+			FS:        migrations.FS,
+			Dir:       migrations.Dir,
+			TableName: migrations.TableName,
+		},
+	); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
 
@@ -77,21 +83,14 @@ func main() {
 		log.Fatalf("notify: %v", err)
 	}
 
-	// Uploads are optional. An app that never stores files leaves UPLOAD_DIR
-	// unset and simply doesn't serve the file routes - see RegisterRoutes.
-	//
-	// When it IS set, a missing or unwritable directory is fatal on purpose:
-	// the alternative is writing uploads to a container layer that gets thrown
-	// away on the next deploy.
-	var filesSvc *files.Service
-	if cfg.UploadDir != "" {
-		filesSvc, err = files.NewService(pool, files.Options{
-			Dir:      cfg.UploadDir,
-			MaxBytes: cfg.UploadMaxBytes,
-		})
-		if err != nil {
-			log.Fatal(err)
-		}
+	// UPLOAD_DIR is required, unlike in the template it came from: storing and
+	// browsing models is the whole app, so a deployment without somewhere to
+	// put them has nothing to serve. A missing or unwritable directory is fatal
+	// for the same reason it was there - the alternative is writing uploads to
+	// a container layer that gets thrown away on the next deploy.
+	librarySvc, err := library.NewService(pool, library.Options{Dir: cfg.UploadDir})
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	// Sign in with Google, also optional. The gate is "any of the three set"
@@ -118,14 +117,14 @@ func main() {
 	})
 
 	// Shared with cmd/openapi, which is what keeps the committed spec honest
-	// about what RegisterRoutes mounts. Not a per-deployment manifest, though:
-	// cmd/openapi always passes a real files service, so with UPLOAD_DIR unset
-	// this binary serves a subset of the spec it ships.
+	// about what RegisterRoutes mounts. Still not a per-deployment manifest:
+	// cmd/openapi always passes a Google config, so a password-only deployment
+	// serves a subset of the spec it ships.
 	if err := app.RegisterRoutes(srv.API, app.Deps{
-		Auth:   authSvc,
-		Notify: notifySvc,
-		Files:  filesSvc,
-		Google: googleCfg,
+		Auth:    authSvc,
+		Notify:  notifySvc,
+		Library: librarySvc,
+		Google:  googleCfg,
 	}); err != nil {
 		log.Fatalf("routes: %v", err)
 	}

@@ -17,7 +17,7 @@ import (
 const SpecPath = "docs/openapi.json"
 
 func main() {
-	// files.NewService write-probes its directory, so spec mode needs a real
+	// library.NewService write-probes its directory, so spec mode needs a real
 	// one. A temp dir keeps the generator from caring about UPLOAD_DIR.
 	dir, err := os.MkdirTemp("", "openapi-spec-*")
 	if err != nil {

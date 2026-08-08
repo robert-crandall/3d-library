@@ -9,26 +9,22 @@ import (
 	"github.com/robert-crandall/3d-library/internal/app"
 )
 
-// Uploads and Google sign-in are optional: cmd/server leaves Deps.Files nil
-// when UPLOAD_DIR is unset and Deps.Google nil when no GOOGLE_* variable is,
-// and RegisterRoutes then mounts neither set of endpoints.
+// Google sign-in is optional: cmd/server leaves Deps.Google nil when no
+// GOOGLE_* variable is set, and RegisterRoutes then mounts neither endpoint.
+// The library is deliberately NOT optional - it is the app - so this covers the
+// one remaining guard.
 //
-// This is the only check on those guards that runs on every pull request.
-// scripts/docker-smoke.sh proves the same thing about files against a real
-// container, but it isn't in CI - so if a guard is deleted, this is what
-// catches it.
+// This is the only check on that guard that runs on every pull request.
 //
 // Note what is deliberately *not* asserted: that the committed spec loses those
-// paths. It doesn't. cmd/openapi always passes a real files service and a
-// placeholder Google config (see SpecModeDeps), so docs/openapi.json describes
-// the template's whole surface and a deployment with either off serves a subset
-// of it.
+// paths. It doesn't. cmd/openapi always passes a placeholder Google config (see
+// SpecModeDeps), so docs/openapi.json describes the whole surface and a
+// password-only deployment serves a subset of it.
 func TestOptionalRoutesAreSkippedWithoutTheirConfig(t *testing.T) {
 	deps, err := app.SpecModeDeps(t.TempDir())
 	if err != nil {
 		t.Fatalf("SpecModeDeps: %v", err)
 	}
-	deps.Files = nil
 	deps.Google = nil
 
 	// The same wiring SpecJSON uses. HumaConfig is not optional here:
@@ -45,12 +41,9 @@ func TestOptionalRoutesAreSkippedWithoutTheirConfig(t *testing.T) {
 
 	paths := srv.API.OpenAPI().Paths
 
-	// Every optional path, not a representative sample: the claim is that these
-	// routes are gone, and naming three of four would leave one unasserted.
+	// Both optional paths, not one of them: the claim is that these routes are
+	// gone, and naming one of two would leave the other unasserted.
 	for _, p := range []string{
-		"/api/files",
-		"/api/files/{id}",
-		"/api/files/{id}/thumbnail",
 		"/api/auth/google/start",
 		"/api/auth/google/callback",
 	} {
@@ -60,9 +53,12 @@ func TestOptionalRoutesAreSkippedWithoutTheirConfig(t *testing.T) {
 	}
 
 	// Non-vacuity: registration really did run, so the absences above mean
-	// something.
-	if _, ok := paths["/api/auth/login"]; !ok {
-		t.Error("/api/auth/login is missing - registration didn't run at all")
+	// something. /api/models is the stronger of the two checks - it is this
+	// app's own route and it is not behind any guard.
+	for _, p := range []string{"/api/auth/login", "/api/models"} {
+		if _, ok := paths[p]; !ok {
+			t.Errorf("%s is missing - registration didn't run at all", p)
+		}
 	}
 }
 

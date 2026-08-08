@@ -127,43 +127,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/files": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List your files */
-        get: operations["list-files"];
-        put?: never;
-        /** Upload a file */
-        post: operations["upload-file"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/files/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Download a file's contents */
-        get: operations["download-file"];
-        put?: never;
-        post?: never;
-        /** Delete a file */
-        delete: operations["delete-file"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/files/{id}/thumbnail": {
+    "/api/models": {
         parameters: {
             query?: never;
             header?: never;
@@ -171,10 +135,34 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Download a file's thumbnail
-         * @description Serves a small JPEG preview. 404 when the file has no thumbnail - check hasThumbnail and fall back to the full file.
+         * List models
+         * @description Every model in the caller's library, newest first.
          */
-        get: operations["download-file-thumbnail"];
+        get: operations["list-models"];
+        put?: never;
+        /**
+         * Upload a model
+         * @description Uploads one or more files as a single named model. The body is multipart/form-data with any number of parts named "files".
+         */
+        post: operations["create-model"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/models/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a model
+         * @description One model and the files it owns.
+         */
+        get: operations["get-model"];
         put?: never;
         post?: never;
         delete?: never;
@@ -414,21 +402,33 @@ export interface components {
             type: string;
         };
         File: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/File.json
-             */
-            readonly $schema?: string;
             contentType: string;
             /** Format: date-time */
             createdAt: string;
             filename: string;
-            hasThumbnail: boolean;
             /** Format: int64 */
             id: number;
             /** Format: int64 */
             size: number;
+            type: string;
+        };
+        Model: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/Model.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: int64 */
+            fileCount: number;
+            files?: components["schemas"]["File"][] | null;
+            /** Format: int64 */
+            id: number;
+            name: string;
+            /** Format: int64 */
+            totalSize: number;
         };
         ProfileInputBody: {
             /**
@@ -865,7 +865,7 @@ export interface operations {
             };
         };
     };
-    "list-files": {
+    "list-models": {
         parameters: {
             query?: never;
             header?: never;
@@ -880,7 +880,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["File"][] | null;
+                    "application/json": components["schemas"]["Model"][] | null;
                 };
             };
             /** @description Unauthorized */
@@ -903,32 +903,30 @@ export interface operations {
             };
         };
     };
-    "upload-file": {
+    "create-model": {
         parameters: {
-            query?: never;
+            query: {
+                /** @description The model's display name */
+                name: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
+        /** @description multipart/form-data with one or more parts named "files". Described as opaque binary so the server can stream it; clients send a FormData, not a string. */
         requestBody: {
             content: {
-                "multipart/form-data": {
-                    /**
-                     * Format: binary
-                     * @description the file to upload
-                     */
-                    file: string;
-                };
+                "multipart/form-data": string;
             };
         };
         responses: {
-            /** @description Created */
-            201: {
+            /** @description OK */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["File"];
+                    "application/json": components["schemas"]["Model"];
                 };
             };
             /** @description Unauthorized */
@@ -969,7 +967,7 @@ export interface operations {
             };
         };
     };
-    "download-file": {
+    "get-model": {
         parameters: {
             query?: never;
             header?: never;
@@ -980,127 +978,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The file's raw bytes. The response Content-Type is the type detected at upload time, not necessarily application/octet-stream. */
+            /** @description OK */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/octet-stream": string;
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ErrorModel"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ErrorModel"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ErrorModel"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ErrorModel"];
-                };
-            };
-        };
-    };
-    "delete-file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description No Content */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ErrorModel"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ErrorModel"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ErrorModel"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["ErrorModel"];
-                };
-            };
-        };
-    };
-    "download-file-thumbnail": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The thumbnail's raw JPEG bytes. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "image/jpeg": string;
+                    "application/json": components["schemas"]["Model"];
                 };
             };
             /** @description Unauthorized */

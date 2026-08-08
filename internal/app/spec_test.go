@@ -36,12 +36,12 @@ func TestSpecDescribesTheContract(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	// Every operation this template registers, as path + method. Path-only
-	// presence isn't enough: /api/files serves both GET and POST, so a
-	// foundation bump that dropped only the POST would leave the path behind
-	// and a shrunken spec would sail through the drift check, because both
-	// sides moved together. Adding an operation never fails this; removing one
-	// does, which is the signal worth having on an upgrade.
+	// Every operation this app registers, as path + method. Path-only presence
+	// isn't enough: /api/models serves both GET and POST, so a change that
+	// dropped only the POST would leave the path behind and a shrunken spec
+	// would sail through the drift check, because both sides moved together.
+	// Adding an operation never fails this; removing one does, which is the
+	// signal worth having on a foundation upgrade.
 	//
 	// The codes column pins the refusals the login page has to render. If the
 	// foundation stops declaring one, the generated TypeScript stops describing
@@ -50,19 +50,17 @@ func TestSpecDescribesTheContract(t *testing.T) {
 		path, method string
 		codes        []string
 	}{
-		// The template's own route. Everything below it is the foundation's.
+		// This app's own routes. Everything below them is the foundation's.
 		{"/api/app", "get", []string{"500"}},
+		{"/api/models", "get", []string{"401"}},
+		{"/api/models", "post", []string{"401", "413", "422"}},
+		{"/api/models/{id}", "get", []string{"401", "404"}},
 		{"/api/auth/register", "post", []string{"403", "409", "422"}},
 		{"/api/auth/login", "post", []string{"401"}},
 		{"/api/auth/logout", "post", nil},
 		{"/api/auth/me", "get", []string{"401"}},
 		{"/api/auth/google/start", "get", nil},
 		{"/api/auth/google/callback", "get", []string{"500"}},
-		{"/api/files", "get", nil},
-		{"/api/files", "post", nil},
-		{"/api/files/{id}", "get", nil},
-		{"/api/files/{id}", "delete", nil},
-		{"/api/files/{id}/thumbnail", "get", nil},
 		{"/api/push/subscribe", "post", nil},
 		{"/api/push/unsubscribe", "post", nil},
 		{"/api/push/test", "post", nil},
