@@ -2,20 +2,17 @@ import type { paths } from './api/schema';
 
 /** The list endpoint's element type. Taken from the generated schema rather
  *  than written out, so a migration that changes the API breaks the build here
- *  instead of at runtime. NonNullable because the generator types a JSON body
- *  as possibly null. */
-export type Model = NonNullable<
-  paths['/api/models']['get']['responses'][200]['content']['application/json']
->[number];
+ *  instead of at runtime. */
+export type Model =
+  paths['/api/models']['get']['responses'][200]['content']['application/json'][number];
 
 /** The detail endpoint's type: everything in Model plus the editable metadata
  *  and the files. A separate shape on the server, because a list of a few
  *  hundred models has no use for descriptions it does not render, and because
  *  `files` has to be present-and-empty for a model whose last file was deleted
  *  rather than missing entirely. */
-export type ModelDetail = NonNullable<
-  paths['/api/models/{id}']['get']['responses'][200]['content']['application/json']
->;
+export type ModelDetail =
+  paths['/api/models/{id}']['get']['responses'][200]['content']['application/json'];
 
 /** One file inside a model. */
 export type ModelFile = ModelDetail['files'][number];

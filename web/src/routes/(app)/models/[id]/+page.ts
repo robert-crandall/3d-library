@@ -14,6 +14,10 @@ import { error } from '@sveltejs/kit';
  * thing standing between the URL and it.
  */
 export function load({ params }: { params: { id: string } }) {
-  if (!/^[1-9][0-9]*$/.test(params.id)) error(404, 'No such model.');
-  return { id: Number(params.id) };
+  const id = Number(params.id);
+  // isSafeInteger as well as the shape check: the URL is untrusted, and a
+  // hundred-digit segment parses to Infinity, which is neither a model nor a
+  // 404 unless it is rejected here.
+  if (!/^[1-9][0-9]*$/.test(params.id) || !Number.isSafeInteger(id)) error(404, 'No such model.');
+  return { id };
 }

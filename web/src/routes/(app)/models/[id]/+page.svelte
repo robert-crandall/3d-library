@@ -213,7 +213,23 @@
     </header>
 
     <div class="mt-6 grid grid-cols-1 items-start gap-5 lg:grid-cols-[1fr_360px]">
-      <section class="rounded-tile border border-line bg-surface">
+      <div class="flex flex-col gap-5">
+        <!--
+          Screen 1c's viewer, drawn as the placeholder the design itself draws:
+          a hatched panel with nothing in it. It is here rather than omitted -
+          unlike Slice settings and Versions - because it is the largest element
+          on the screen, and a detail page without it is a different layout, not
+          the same layout missing a panel. It is inert and aria-hidden: there is
+          nothing to read out and nothing to operate until M5 puts a mesh in it.
+        -->
+        <div
+          aria-hidden="true"
+          class="viewer-hatch flex h-64 items-center justify-center rounded-tile border border-line"
+        >
+          <span class="text-xs text-faint">3D preview</span>
+        </div>
+
+        <section class="rounded-tile border border-line bg-surface">
         <div class="flex items-baseline justify-between border-b border-line px-4 py-3">
           <h2 class="text-sm font-semibold">Files</h2>
           <span class="text-xs text-muted">
@@ -289,6 +305,7 @@
           </table>
         {/if}
       </section>
+      </div>
 
       <div class="flex flex-col gap-5">
         {#if model.description}
@@ -304,7 +321,14 @@
         {#if model.printTips}
           <section class="rounded-tile border border-line bg-surface px-4 py-3">
             <h2 class="text-sm font-semibold">Print tips</h2>
-            <p class="mt-2 text-sm whitespace-pre-line text-muted">{model.printTips}</p>
+            <!-- One tip per line, as design 1c draws them. The column is plain
+                 text and the editor is a textarea, so the newline the user
+                 typed is the only separator there is. -->
+            <ul class="mt-2 list-disc space-y-1 pl-4 text-sm text-muted">
+              {#each model.printTips.split('\n').filter((tip) => tip.trim() !== '') as tip}
+                <li>{tip}</li>
+              {/each}
+            </ul>
           </section>
         {/if}
       </div>

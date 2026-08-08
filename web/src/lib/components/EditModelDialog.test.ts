@@ -22,6 +22,8 @@ function open(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EditModelDialog', () => {
+  // All four, not just the name. PUT replaces the whole editable surface, so a
+  // field this dialog forgot to seed would be silently blanked on save.
   it('opens with the model already in the fields', () => {
     open();
 
@@ -37,6 +39,8 @@ describe('EditModelDialog', () => {
     );
   });
 
+  // Same reason from the other side: asserting only the changed field would
+  // pass while the other three went up empty.
   it('sends every field, not just the changed one', async () => {
     const { onsave } = open();
 
@@ -73,12 +77,16 @@ describe('EditModelDialog', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
+  // The server's words, not a status-code lookup table. A generic "could not
+  // save" would pass a weaker assertion and tell the user nothing.
   it('shows the server refusal it was handed', () => {
     open({ error: 'source URL must be an http:// or https:// address' });
 
     expect(screen.getByRole('alert').textContent).toContain('must be an http://');
   });
 
+  // Cancel as well as Save: a dialog dismissed mid-request leaves the page with
+  // no idea whether the write landed.
   it('locks both buttons while the save is in flight', () => {
     open({ busy: true });
 

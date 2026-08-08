@@ -968,7 +968,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Model"][] | null;
+                    "application/json": components["schemas"]["Model"][];
                 };
             };
             /** @description Unauthorized */

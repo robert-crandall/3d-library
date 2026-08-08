@@ -242,7 +242,11 @@ type modelOutput struct {
 }
 
 type modelsOutput struct {
-	Body []Model
+	// nullable:"false" for the same reason ModelDetail.Files carries it: huma
+	// types a Go slice as ["array","null"], the handler always returns a slice,
+	// and a contract that says null is possible makes every caller carry a
+	// branch for something that cannot arrive.
+	Body []Model `json:"body" nullable:"false"`
 }
 
 func registerList(api huma.API, svc *Service, currentUser CurrentUserFunc) {

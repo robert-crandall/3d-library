@@ -1489,7 +1489,12 @@ func TestContentTypeIsSniffedNotTrusted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create part: %v", err)
 	}
-	if _, err := io.WriteString(w, "<script>alert(1)</script>"); err != nil {
+	// Arbitrary binary, chosen so http.DetectContentType has nothing to
+	// recognise and answers application/octet-stream. HTML or a real PNG would
+	// be a weaker test: both sniff to something specific, so the assertion
+	// would still pass if the header were consulted as a fallback for bytes
+	// nothing recognises - which is exactly the hole being closed.
+	if _, err := w.Write([]byte{0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x7f}); err != nil {
 		t.Fatalf("write part: %v", err)
 	}
 	if err := mw.Close(); err != nil {
@@ -1504,14 +1509,22 @@ func TestContentTypeIsSniffedNotTrusted(t *testing.T) {
 	if len(got.Files) != 1 {
 		t.Fatalf("got %d files", len(got.Files))
 	}
-	if ct := got.Files[0].ContentType; strings.HasPrefix(ct, "image/") {
-		t.Errorf("contentType = %q - the client's claim was believed", ct)
+	if ct := got.Files[0].ContentType; ct != "application/octet-stream" {
+		t.Errorf("contentType = %q, want application/octet-stream - the client's claim was believed", ct)
 	}
 	// The domain type still comes from the extension, which is a different
 	// question: "what kind of thing is this in the library" is the user's to
 	// declare by naming the file, where "what bytes are these" is not.
 	if got.Files[0].Type != "image" {
 		t.Errorf("type = %q, want image - the extension decides the domain type", got.Files[0].Type)
+	}
+
+	// The stored value is only half of it: what the browser acts on is the
+	// header on the download, and image/png there is what would make a forged
+	// upload render as a picture.
+	down, _ := c.get(fmt.Sprintf("/api/models/%d/files/%d", got.ID, got.Files[0].ID))
+	if ct := down.Header.Get("Content-Type"); ct != "application/octet-stream" {
+		t.Errorf("served Content-Type = %q, want application/octet-stream", ct)
 	}
 }
 

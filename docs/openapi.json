@@ -1128,10 +1128,7 @@
                   "items": {
                     "$ref": "#/components/schemas/Model"
                   },
-                  "type": [
-                    "array",
-                    "null"
-                  ]
+                  "type": "array"
                 }
               }
             },

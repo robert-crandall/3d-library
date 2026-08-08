@@ -292,19 +292,37 @@ describe('UploadDialog in add-files mode', () => {
     expect(mockedAdd.mock.calls[0][0]).toBe(7);
   });
 
-  // No count in the message, unlike the create flow: the page re-reads the
-  // model as soon as this closes, so the server gets to say what landed. All
-  // this has to do is name what to try again.
-  it('names the files that failed and stays open', async () => {
-    mockedAdd.mockResolvedValue({ failed: ['b.stl'] });
+  // The bug this replaced: with A uploaded and B failed, the dialog kept an
+  // enabled Add button over a queue that still held A, so pressing it again
+  // uploaded a second copy of A. A partial add is terminal for that reason -
+  // the only way on is to close, re-read, and pick what is actually missing.
+  it('goes terminal after a partial add rather than offering to re-send', async () => {
+    mockedAdd.mockImplementation(async (_id, files, onState) => {
+      onState(0, 'done');
+      onState(1, 'failed', 'boom');
+      return { failed: [files[1].name] };
+    });
     const onclose = vi.fn();
+    const sent = mockedAdd.mock.calls.length;
     render(UploadDialog, { model, onclose });
 
-    await pickAFile();
+    const input = screen.getByLabelText('Files') as HTMLInputElement;
+    Object.defineProperty(input, 'files', {
+      value: [new File(['a'], 'a.stl'), new File(['b'], 'b.stl')],
+      configurable: true
+    });
+    await fireEvent.change(input);
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('b.stl');
+    expect(screen.queryByRole('button', { name: 'Add' })).toBeNull();
     expect(onclose).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    // Reload, always: a.stl landed, and the count on the model page is the one
+    // thing this flow must not leave stale.
+    expect(onclose).toHaveBeenCalledWith({ reload: true });
+    expect(mockedAdd.mock.calls.length).toBe(sent + 1);
   });
 
   // Cancel is not "nothing happened". Files may have landed before the user

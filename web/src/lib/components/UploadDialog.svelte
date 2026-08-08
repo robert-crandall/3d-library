@@ -103,10 +103,16 @@
           progress
         );
         if (failed.length > 0) {
-          // No count here, unlike the create flow: the page re-reads the model
-          // the moment this closes, so the server says what landed. All this
-          // has to say is which files to try again.
-          error = `These did not upload: ${failed.join(', ')}.`;
+          // Terminal, not retryable in place. The queue still holds the files
+          // that already landed, so an Add button here would re-send them and
+          // make exactly the duplicate this dialog exists to avoid. Closing
+          // re-reads the model, and the user picks the missing files again
+          // against a count the server vouches for.
+          //
+          // No count in the message, unlike the create flow below: the page
+          // re-reads the moment this closes, so all this has to say is which
+          // files to try again.
+          done = `These did not upload: ${failed.join(', ')}. Add files again to retry them.`;
           return;
         }
         onclose({ reload: true });
@@ -147,18 +153,18 @@
     }
   }
 
-  function cancel() {
-    // Add mode reloads on cancel: some files may already have uploaded before
-    // the user gave up on the rest, and leaving the page showing the old count
-    // is the one thing the model page must never do.
-    onclose({ reload: model !== undefined });
+  function close() {
+    // Add mode always asks for a reload: files may have landed before the rest
+    // failed or before the user gave up, and a stale count on the model page is
+    // the one thing this flow must not leave behind. From the create flow only
+    // an unresolved outcome needs it, because everything else is already known.
+    onclose({ reload: unresolved || model !== undefined });
   }
 
   function dismiss() {
     // Escape does whatever the dismissing button would have done, including
     // doing nothing while that button is disabled mid-upload.
-    if (done) onclose({ reload: unresolved });
-    else if (!busy) cancel();
+    if (done || !busy) close();
   }
 </script>
 
@@ -235,7 +241,7 @@
         <button
           type="button"
           class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink"
-          onclick={() => onclose({ reload: unresolved })}
+          onclick={close}
         >
           {unresolved ? 'Reload library' : 'Done'}
         </button>
@@ -243,7 +249,7 @@
         <button
           type="button"
           class="rounded border border-line-strong px-3 py-1.5 text-sm"
-          onclick={cancel}
+          onclick={close}
           disabled={busy}
         >
           Cancel

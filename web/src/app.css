@@ -50,3 +50,18 @@ html {
   background-color: var(--color-page);
   color: var(--color-ink);
 }
+
+/*
+  The hatched stand-in for the 3D viewer on the model detail screen, straight
+  off design 1c. It is a class rather than utilities because a repeating
+  gradient in markup is a colour escaping the palette: both stops come from the
+  named colours above, so the .dark block re-tints it for free.
+*/
+.viewer-hatch {
+  background-color: var(--color-sidebar);
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--color-line) 0 8px,
+    var(--color-sidebar) 8px 16px
+  );
+}

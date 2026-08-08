@@ -26,6 +26,8 @@ describe('ConfirmDialog', () => {
     expect(screen.getByRole('dialog').getAttribute('aria-modal')).toBe('true');
   });
 
+  // Once, and only the one that was clicked. A handler wired to both would pass
+  // a test that only checked the confirm path.
   it('reports each answer once', async () => {
     const { onconfirm, oncancel } = open();
 
@@ -50,6 +52,8 @@ describe('ConfirmDialog', () => {
     );
   });
 
+  // Still asking the question. Rendering the error over a dialog that had
+  // already dismissed itself would leave the user with an error and no action.
   it('shows a failure without closing', () => {
     open({ error: 'still in use' });
 

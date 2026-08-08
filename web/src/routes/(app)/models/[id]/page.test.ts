@@ -54,7 +54,10 @@ beforeEach(() => {
 // only ever be refused, so it is worth its own three lines.
 describe('model detail load', () => {
   it('refuses a segment that is not a model id', () => {
-    for (const id of ['nonsense', '0', '-1', '1.5', '', '7x']) {
+    // The last one is the reason this is not just a digits check: it is all
+    // digits, and Number() turns it into something that is neither a model nor
+    // a 404 unless it is caught here.
+    for (const id of ['nonsense', '0', '-1', '1.5', '', '7x', '9'.repeat(30)]) {
       expect(() => load({ params: { id } })).toThrow();
     }
   });
@@ -88,6 +91,20 @@ describe('model detail page', () => {
     // User-supplied and off-site, so it must not hand the destination a window
     // handle back into the app.
     expect(source.getAttribute('rel')).toContain('noreferrer');
+  });
+
+  // One tip per line, as design 1c draws them. A single paragraph would render
+  // the same words and lose the list, which is what a screen reader announces
+  // as "list, 3 items".
+  it('renders print tips one per line', async () => {
+    get.mockResolvedValue({
+      data: { ...model, printTips: 'PETG at 245 C.\n\nBrim on.\nNo supports.' }
+    });
+    render(ModelPage, { data });
+
+    const tips = await screen.findByRole('list');
+    const items = within(tips).getAllByRole('listitem');
+    expect(items.map((li) => li.textContent)).toEqual(['PETG at 245 C.', 'Brim on.', 'No supports.']);
   });
 
   // The panels only exist when there is something in them. A heading with
