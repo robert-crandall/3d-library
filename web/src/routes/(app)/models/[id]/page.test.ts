@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ModelPage from './+page.svelte';
 import { load } from './+page';
+import { coreOnly3mf } from '$lib/mesh/fixtures';
 
 const get = vi.fn();
 const put = vi.fn();
@@ -16,6 +17,14 @@ vi.mock('$lib/api/client', () => ({
   }
 }));
 vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => goto(...args) }));
+
+// The page embeds the mesh viewer, which needs a GL context jsdom does not have and
+// downloads the file with a raw fetch. Both are stubbed so the viewer settles quietly:
+// what it does with the bytes is MeshViewer.test.ts's job, not this file's.
+vi.mock('$lib/mesh/scene', () => ({
+  createViewer: () => ({ show: vi.fn(), setShading: vi.fn(), dispose: vi.fn(), resize: vi.fn() })
+}));
+vi.stubGlobal('fetch', async () => new Response(coreOnly3mf()));
 
 const file = {
   id: 10,
@@ -364,6 +373,31 @@ describe('model detail page', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     expect(within(screen.getByRole('dialog')).queryByRole('alert')).toBeNull();
   });
+
+  // The viewer is a section like the description and the source link: present when
+  // there is something to put in it, absent otherwise. It also decides whether three.js
+  // is fetched at all, because `MeshViewer` imports it on mount - so a panel that
+  // rendered for every model would spend 130 KB telling a G-code-only model that it has
+  // nothing to show.
+  it('leaves the viewer out of a model with no mesh file', async () => {
+    get.mockResolvedValue({
+      data: {
+        ...model,
+        files: [{ ...file, id: 21, filename: 'plate-1.gcode', type: 'gcode' }]
+      }
+    });
+    render(ModelPage, { data });
+
+    await screen.findByRole('link', { name: 'plate-1.gcode' });
+    expect(screen.queryByTestId('mesh-viewer')).toBeNull();
+  });
+
+  it('shows the viewer for a model that has one', async () => {
+    get.mockResolvedValue({ data: model });
+    render(ModelPage, { data });
+
+    expect(await screen.findByTestId('mesh-viewer')).not.toBeNull();
+  });
 });
 
 // The thumbnail controls are the only place the user can override what the
@@ -466,7 +500,7 @@ describe('model detail thumbnails', () => {
     });
     render(ModelPage, { data });
 
-    expect(await screen.findByText('notes.txt')).toBeTruthy();
+    expect(await screen.findByRole('link', { name: 'notes.txt' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Use as thumbnail' })).toBeNull();
   });
 
@@ -484,7 +518,7 @@ describe('model detail thumbnails', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('that file has no thumbnail');
-    expect(screen.getByText('dry-box-body.3mf')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'dry-box-body.3mf' })).toBeTruthy();
   });
 
   // Every mutation is disabled while any one is in flight. Without this a pin

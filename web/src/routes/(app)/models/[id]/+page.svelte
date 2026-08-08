@@ -6,6 +6,8 @@
   import EditModelDialog from '$lib/components/EditModelDialog.svelte';
   import UploadDialog from '$lib/components/UploadDialog.svelte';
   import SliceSettings from '$lib/components/SliceSettings.svelte';
+  import MeshViewer from '$lib/components/MeshViewer.svelte';
+  import { previewable } from '$lib/mesh/parse';
   import Thumbnail from '$lib/components/Thumbnail.svelte';
   import { formatBytes, formatDate, formatFileCount } from '$lib/format';
   import { sliceRows } from '$lib/slice';
@@ -48,6 +50,13 @@
   // and a delete overlap, and whichever response lands second wins: pin-then-
   // delete leaves the page showing a file the server no longer has.
   const mutating = $derived(pinning || busy);
+
+  // The viewer is a section like the description and the source link: absent when there
+  // is nothing to put in it, rather than present and empty. Deciding it here is also
+  // what keeps three.js off a model that has no mesh - `MeshViewer` imports it on mount,
+  // so an always-present panel would fetch 130 KB to tell a G-code-only model there is
+  // nothing to show.
+  const hasMesh = $derived(model?.files.some((file) => previewable(file.type)) ?? false);
   // Its own message rather than the page's `error`, which is only rendered by
   // the `failed` branch: a refused pin must not replace a model that loaded
   // fine with an error screen.
@@ -197,10 +206,10 @@
 </script>
 
 <!--
-  Screen 1c of the design, minus the parts no milestone has built yet: the 3D
-  viewer, versions, category and tags. Those are omitted, not rendered empty - a
-  panel with nothing in it reads as broken, where an absent panel reads as a
-  feature that is not here yet.
+  Screen 1c of the design, minus the parts no milestone has built yet: versions,
+  category and tags. Those are omitted, not rendered empty - a panel with nothing
+  in it reads as broken, where an absent panel reads as a feature that is not here
+  yet.
 
   "Open in slicer" is on the design and is deliberately not built; the epic cut
   it from v1.
@@ -277,20 +286,9 @@
 
     <div class="mt-6 grid grid-cols-1 items-start gap-5 lg:grid-cols-[1fr_360px]">
       <div class="flex flex-col gap-5">
-        <!--
-          Screen 1c's viewer, drawn as the placeholder the design itself draws:
-          a hatched panel with nothing in it. It is here rather than omitted -
-          unlike Slice settings and Versions - because it is the largest element
-          on the screen, and a detail page without it is a different layout, not
-          the same layout missing a panel. It is inert and aria-hidden: there is
-          nothing to read out and nothing to operate until M5 puts a mesh in it.
-        -->
-        <div
-          aria-hidden="true"
-          class="hatch flex h-64 items-center justify-center rounded-tile border border-line"
-        >
-          <span class="text-xs text-faint">3D preview</span>
-        </div>
+        {#if hasMesh}
+          <MeshViewer modelId={model.id} files={model.files} />
+        {/if}
 
         <section class="rounded-tile border border-line bg-surface">
         <div class="flex items-baseline justify-between border-b border-line px-4 py-3">
@@ -505,16 +503,3 @@
   />
 {/if}
 
-<style>
-  /* Scoped, not in app.css, because it is this screen's placeholder and not a
-     palette entry. Built from the palette variables so the .dark block re-tints
-     it without a second rule here. */
-  .hatch {
-    background-color: var(--color-sidebar);
-    background-image: repeating-linear-gradient(
-      45deg,
-      var(--color-line) 0 8px,
-      var(--color-sidebar) 8px 16px
-    );
-  }
-</style>

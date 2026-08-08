@@ -77,6 +77,7 @@ There is no linter or formatter beyond `go vet` and `svelte-check`. Keep Go
 | `internal/cicd` | no code - table-tests the shell scripts under `scripts/ci/` |
 | `web/src/lib/` | API client, auth store, upload helper, formatting |
 | `web/src/lib/components/` | shared Svelte components |
+| `web/src/lib/mesh/` | STL and 3MF parsing, camera framing, the three.js scene |
 | `web/src/routes/(app)/` | signed-in pages; the auth guard wraps this group |
 | `web/src/**/*.test.ts` | Vitest component and unit tests |
 | `scripts/ci/` | the decisions `.github/workflows/publish.yml` and `notify.yml` make |
