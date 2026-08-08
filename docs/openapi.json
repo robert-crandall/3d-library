@@ -287,6 +287,9 @@
             "format": "date-time",
             "type": "string"
           },
+          "extractedMeta": {
+            "$ref": "#/components/schemas/Meta"
+          },
           "filename": {
             "type": "string"
           },
@@ -310,6 +313,78 @@
           "size",
           "createdAt"
         ],
+        "type": "object"
+      },
+      "Meta": {
+        "additionalProperties": false,
+        "properties": {
+          "bedTempC": {
+            "format": "double",
+            "type": "number"
+          },
+          "bottomLayers": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "filamentCost": {
+            "format": "double",
+            "type": "number"
+          },
+          "filamentGrams": {
+            "format": "double",
+            "type": "number"
+          },
+          "filamentMm": {
+            "format": "double",
+            "type": "number"
+          },
+          "filamentType": {
+            "type": "string"
+          },
+          "infillPattern": {
+            "type": "string"
+          },
+          "infillPercent": {
+            "format": "double",
+            "type": "number"
+          },
+          "layerHeightMm": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxVolumetricSpeed": {
+            "format": "double",
+            "type": "number"
+          },
+          "nozzleTempC": {
+            "format": "double",
+            "type": "number"
+          },
+          "printTimeSeconds": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "printerModel": {
+            "type": "string"
+          },
+          "slicer": {
+            "type": "string"
+          },
+          "slicerVersion": {
+            "type": "string"
+          },
+          "supports": {
+            "type": "boolean"
+          },
+          "topLayers": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "wallLoops": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
         "type": "object"
       },
       "Model": {

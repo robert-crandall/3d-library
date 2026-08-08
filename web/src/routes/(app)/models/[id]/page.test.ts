@@ -125,6 +125,63 @@ describe('model detail page', () => {
   // A plain link to the download endpoint, not a fetch: the browser streams a
   // 500 MB response to disk on its own, where reading it into a Blob first is
   // how you run out of memory.
+  /**
+   * The panel is chosen from the files, not sent alongside them, so these three
+   * cover the whole of that choice: no G-code means no panel, a G-code file the
+   * parser could not attribute means no panel either, and the first readable one
+   * wins when there are several.
+   */
+  it('omits the slice settings panel when no file has any', async () => {
+    get.mockResolvedValue({ data: model });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    expect(screen.queryByRole('heading', { name: 'Slice settings' })).toBeNull();
+  });
+
+  it('renders slice settings from the G-code file that has them', async () => {
+    const gcode = {
+      id: 11,
+      filename: 'plate-1.gcode',
+      type: 'gcode',
+      contentType: 'text/plain; charset=utf-8',
+      size: 96 * 1024 * 1024,
+      createdAt: '2026-03-12T09:05:00Z',
+      extractedMeta: {
+        slicer: 'OrcaSlicer',
+        slicerVersion: '2.3.2-dev',
+        layerHeightMm: 0.2,
+        nozzleTempC: 210,
+        bedTempC: 55
+      }
+    };
+    get.mockResolvedValue({ data: { ...model, files: [file, gcode] } });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Slice settings' });
+    expect(screen.getByText('from plate-1.gcode')).toBeTruthy();
+    expect(screen.getByText('0.20 mm')).toBeTruthy();
+    expect(screen.getByText('210 °C / 55 °C')).toBeTruthy();
+  });
+
+  // A file whose slicer we did not recognise stores no metadata at all, and a
+  // header with no rows under it reads as a panel that failed to load.
+  it('omits the panel for a G-code file with no readable settings', async () => {
+    const unreadable = {
+      id: 12,
+      filename: 'mystery.gcode',
+      type: 'gcode',
+      contentType: 'text/plain; charset=utf-8',
+      size: 1024,
+      createdAt: '2026-03-12T09:05:00Z'
+    };
+    get.mockResolvedValue({ data: { ...model, files: [unreadable] } });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    expect(screen.queryByRole('heading', { name: 'Slice settings' })).toBeNull();
+  });
+
   it('links each file at its download endpoint', async () => {
     get.mockResolvedValue({ data: model });
     render(ModelPage, { data });
