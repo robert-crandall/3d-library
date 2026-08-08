@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; background: #b9bec4; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+  a { color: #2f62d8; text-decoration: none; }
+  a:hover { color: #1b47ab; text-decoration: underline; }
+  input, button, select { font: inherit; outline: none; }
+</style>
+</helmet>
+
+<section style="padding: 56px; display: flex; flex-direction: column; gap: 40px;">
+  <div style="display: flex; flex-wrap: wrap; gap: 56px; align-items: flex-start;">
+
+    <div id="1c" style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: baseline; gap: 12px;">
+        <span style="display: inline-block; background: #14171a; color: #fff; font-size: 13px; font-weight: 700; padding: 3px 9px; border-radius: 4px;">1c</span>
+        <span style="font-size: 15px; font-weight: 600; color: #14171a;">Model detail — light</span>
+        <span style="font-size: 13px; color: #4b5158;">centerpiece</span>
+      </div>
+      <div style="width: 1440px; height: 900px; display: flex; background: #f7f8f9; color: #14171a; border: 1px solid #b0b6bc; box-shadow: 0 8px 28px rgba(0,0,0,.14); overflow: hidden;">
+
+        <div style="width: 248px; flex: none; background: #f0f2f4; border-right: 1px solid #e2e5e9; display: flex; flex-direction: column;">
+          <div style="padding: 18px 16px 12px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="width: 14px; height: 14px; background: #2f62d8; border-radius: 3px;"></div>
+              <div style="font-size: 14px; font-weight: 700; letter-spacing: -.01em;">3D Library</div>
+            </div>
+            <input type="text" value="Search models" style="width: 100%; padding: 7px 9px; font-size: 13px; color: #6b7280; background: #fff; border: 1px solid #d7dbe0; border-radius: 5px;" style-focus="border-color: #2f62d8; box-shadow: 0 0 0 2px rgba(47,98,216,.4);">
+          </div>
+          <div style="flex: 1; overflow: hidden; padding: 0 8px; display: flex; flex-direction: column; gap: 16px;">
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #8b929c; padding: 0 8px 6px;">Library</div>
+              <div style="display: flex; flex-direction: column;">
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px; border-radius: 5px;">All models<span style="color: #8b929c;">312</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px; border-radius: 5px;">Recently added<span style="color: #8b929c;">18</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px; border-radius: 5px;">Uncategorized<span style="color: #8b929c;">27</span></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #8b929c; padding: 0 8px 6px;">Categories</div>
+              <div style="display: flex; flex-direction: column;">
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px; border-radius: 5px; background: #e2eafb; font-weight: 600;">
+                  <span style="width: 8px; height: 8px; border-radius: 2px; background: #3f8f5e;"></span>Functional<span style="margin-left: auto; color: #6b7280; font-weight: 400;">96</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 24px; font-size: 13px; color: #4b5158;">Enclosures<span style="margin-left: auto; color: #8b929c;">14</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 24px; font-size: 13px; color: #4b5158;">Storage<span style="margin-left: auto; color: #8b929c;">31</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px; border-radius: 5px;">
+                  <span style="width: 8px; height: 8px; border-radius: 2px; background: #a05ac0;"></span>Miniatures<span style="margin-left: auto; color: #8b929c;">64</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px; border-radius: 5px;">
+                  <span style="width: 8px; height: 8px; border-radius: 2px; background: #2f62d8;"></span>Tools &amp; jigs<span style="margin-left: auto; color: #8b929c;">52</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px; border-radius: 5px;">
+                  <span style="width: 8px; height: 8px; border-radius: 2px; background: #d08a2c;"></span>Toys<span style="margin-left: auto; color: #8b929c;">45</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px; border-radius: 5px;">
+                  <span style="width: 8px; height: 8px; border-radius: 2px; background: #c05a5a;"></span>Household<span style="margin-left: auto; color: #8b929c;">55</span>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #8b929c; padding: 0 8px 6px;">Collections</div>
+              <div style="display: flex; flex-direction: column;">
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Voron 0.2 build<span style="color: #8b929c;">41</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Garage overhaul<span style="color: #8b929c;">12</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Gifts 2026<span style="color: #8b929c;">7</span></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #8b929c; padding: 0 8px 6px;">Tags</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 5px; padding: 0 8px;">
+                <span style="font-size: 12px; padding: 3px 7px; background: #e5e8ec; border-radius: 4px; color: #4b5158;">petg</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #e5e8ec; border-radius: 4px; color: #4b5158;">printed</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #e5e8ec; border-radius: 4px; color: #4b5158;">supports-free</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #e5e8ec; border-radius: 4px; color: #4b5158;">multi-part</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #e5e8ec; border-radius: 4px; color: #4b5158;">remix</span>
+              </div>
+            </div>
+          </div>
+          <div style="padding: 12px 16px; border-top: 1px solid #e2e5e9; display: flex; justify-content: space-between; font-size: 13px; color: #4b5158;">
+            <span>Settings</span><span style="color: #8b929c;">v2.4.1</span>
+          </div>
+        </div>
+
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+          <div style="padding: 20px 32px 0; display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; align-items: center; gap: 7px; font-size: 13px; color: #6b7280;">
+              <a href="#1c">Library</a><span style="color: #b7bcc3;">/</span><a href="#1c">Functional</a><span style="color: #b7bcc3;">/</span><a href="#1c">Enclosures</a><span style="color: #b7bcc3;">/</span><span style="color: #14171a;">Filament Dry Box</span>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 16px;">
+              <div style="min-width: 0;">
+                <h1 style="margin: 0 0 6px; font-size: 25px; font-weight: 600; letter-spacing: -.015em;">Filament Dry Box</h1>
+                <div style="display: flex; align-items: center; gap: 10px; font-size: 13px; color: #6b7280;">
+                  <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; background: #e7f1eb; color: #2c6b46; border-radius: 4px; font-weight: 600;"><span style="width: 7px; height: 7px; border-radius: 2px; background: #3f8f5e;"></span>Functional</span>
+                  <span>7 files · 184 MB</span>
+                  <span style="color: #b7bcc3;">·</span>
+                  <span>Added 12 Mar 2026</span>
+                  <span style="color: #b7bcc3;">·</span>
+                  <a href="#1c">printables.com/model/48213</a>
+                </div>
+              </div>
+              <div style="margin-left: auto; display: flex; gap: 8px; flex: none;">
+                <button style="padding: 7px 13px; font-size: 13px; background: #fff; border: 1px solid #d7dbe0; border-radius: 5px; color: #14171a;" style-hover="background: #f2f4f6;">Edit</button>
+                <button style="padding: 7px 13px; font-size: 13px; background: #fff; border: 1px solid #d7dbe0; border-radius: 5px; color: #14171a;" style-hover="background: #f2f4f6;">Add files</button>
+                <button style="padding: 7px 13px; font-size: 13px; background: #2f62d8; border: 1px solid #2f62d8; border-radius: 5px; color: #fff; font-weight: 600;" style-hover="background: #2653bb;">Open in slicer</button>
+              </div>
+            </div>
+          </div>
+
+          <div style="flex: 1; min-height: 0; padding: 18px 32px 24px; display: grid; grid-template-columns: 1fr 392px; gap: 20px;">
+            <div style="min-width: 0; display: flex; flex-direction: column; gap: 20px;">
+              <div style="flex: none; height: 392px; background: #fff; border: 1px solid #e2e5e9; border-radius: 7px; display: flex; flex-direction: column; overflow: hidden;">
+                <div style="display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-bottom: 1px solid #e2e5e9;">
+                  <span style="padding: 5px 10px; font-size: 13px; border-radius: 5px; background: #e2eafb; color: #1b47ab; font-weight: 600;">dry-box-body.3mf</span>
+                  <span style="padding: 5px 10px; font-size: 13px; color: #4b5158;">lid.stl</span>
+                  <span style="padding: 5px 10px; font-size: 13px; color: #4b5158;">plate-1.gcode</span>
+                  <span style="padding: 5px 10px; font-size: 13px; color: #4b5158;">assembly.jpg</span>
+                  <span style="margin-left: auto; font-size: 12px; color: #8b929c; padding-right: 4px;">Wireframe · Solid · X-ray</span>
+                </div>
+                <div style="flex: 1; background-color: #eceff2; background-image: repeating-linear-gradient(45deg, #e4e8ec 0 8px, #eceff2 8px 16px); display: flex; align-items: center; justify-content: center; position: relative;">
+                  <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #6b7280; background: #fff; border: 1px solid #d7dbe0; padding: 4px 9px; border-radius: 4px;">3D mesh preview</span>
+                  <span style="position: absolute; left: 12px; bottom: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #6b7280;">220 × 180 × 145 mm · 4 objects</span>
+                  <span style="position: absolute; right: 12px; bottom: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #6b7280;">Bambu X1C · 256³ build volume</span>
+                </div>
+              </div>
+
+              <div style="flex: 1; min-height: 0; background: #fff; border: 1px solid #e2e5e9; border-radius: 7px; display: flex; flex-direction: column; overflow: hidden;">
+                <div style="display: flex; align-items: center; padding: 11px 14px; border-bottom: 1px solid #e2e5e9;">
+                  <div style="font-size: 13px; font-weight: 700;">Files</div>
+                  <div style="margin-left: auto; font-size: 12px; color: #8b929c;">7 files · 184 MB</div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 92px 84px 120px; padding: 7px 14px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #8b929c; border-bottom: 1px solid #eef0f2;">
+                  <span>Name</span><span>Type</span><span>Size</span><span>Added</span>
+                </div>
+                <sc-for list="{{ files }}" as="f" hint-placeholder-count="5">
+                  <div style="display: grid; grid-template-columns: 1fr 92px 84px 120px; align-items: center; padding: 9px 14px; font-size: 13px; border-bottom: 1px solid #f2f4f6;">
+                    <span style="display: flex; align-items: center; gap: 9px; min-width: 0;">
+                      <span style="width: 22px; height: 22px; flex: none; border-radius: 3px; background-color: #eceff2; background-image: repeating-linear-gradient(45deg, #e0e4e9 0 4px, #eceff2 4px 8px);"></span>
+                      <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ f.name }}</span>
+                    </span>
+                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #4b5158;">{{ f.type }}</span>
+                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #4b5158;">{{ f.size }}</span>
+                    <span style="font-size: 12px; color: #8b929c;">{{ f.added }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="min-width: 0; display: flex; flex-direction: column; gap: 20px; overflow: hidden;">
+              <div style="background: #fff; border: 1px solid #e2e5e9; border-radius: 7px; overflow: hidden;">
+                <div style="display: flex; align-items: center; padding: 11px 14px; border-bottom: 1px solid #e2e5e9;">
+                  <div style="font-size: 13px; font-weight: 700;">Slice settings</div>
+                  <div style="margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #8b929c;">from plate-1.gcode</div>
+                </div>
+                <div style="padding: 4px 14px 12px;">
+                  <sc-for list="{{ meta }}" as="m" hint-placeholder-count="9">
+                    <div style="display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-bottom: 1px solid #f4f6f7;">
+                      <span style="font-size: 12px; color: #6b7280; width: 132px; flex: none;">{{ m.k }}</span>
+                      <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; color: #14171a;">{{ m.v }}</span>
+                    </div>
+                  </sc-for>
+                  <div style="padding-top: 9px; font-size: 12px; color: #8b929c;">Detected slicer: OrcaSlicer 2.1.1 · <a href="#1c">all 24 fields</a></div>
+                </div>
+              </div>
+
+              <div style="background: #fff; border: 1px solid #e2e5e9; border-radius: 7px; overflow: hidden;">
+                <div style="padding: 11px 14px; border-bottom: 1px solid #e2e5e9; font-size: 13px; font-weight: 700;">Versions</div>
+                <div style="padding: 8px 14px 12px;">
+                  <div style="display: flex; align-items: center; gap: 9px; padding: 6px 0;">
+                    <span style="width: 9px; height: 9px; border-radius: 50%; background: #2f62d8;"></span>
+                    <span style="font-size: 13px; font-weight: 600;">final — desiccant tray fix</span>
+                    <span style="margin-left: auto; font-size: 12px; color: #8b929c;">12 Mar</span>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 9px; padding: 6px 0 6px 18px; border-left: 1px solid #e2e5e9; margin-left: 4px;">
+                    <span style="font-size: 13px; color: #4b5158;">v2 — thicker lid gasket</span>
+                    <span style="margin-left: auto; font-size: 12px; color: #8b929c;">28 Feb</span>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 9px; padding: 6px 0 6px 18px; border-left: 1px solid #e2e5e9; margin-left: 4px;">
+                    <span style="font-size: 13px; color: #4b5158;">v1 — original download</span>
+                    <span style="margin-left: auto; font-size: 12px; color: #8b929c;">19 Feb</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="flex: 1; min-height: 0; background: #fff; border: 1px solid #e2e5e9; border-radius: 7px; overflow: hidden; display: flex; flex-direction: column;">
+                <div style="padding: 11px 14px; border-bottom: 1px solid #e2e5e9; font-size: 13px; font-weight: 700;">Print tips</div>
+                <div style="padding: 10px 14px; display: flex; flex-direction: column; gap: 7px;">
+                  <div style="display: flex; gap: 8px; font-size: 13px; line-height: 1.45; color: #2c3136;"><span style="color: #b7bcc3;">–</span>PETG at 245 °C, bed 80 °C. PLA warps at the hinge.</div>
+                  <div style="display: flex; gap: 8px; font-size: 13px; line-height: 1.45; color: #2c3136;"><span style="color: #b7bcc3;">–</span>Print the lid flat side down, no supports needed.</div>
+                  <div style="display: flex; gap: 8px; font-size: 13px; line-height: 1.45; color: #2c3136;"><span style="color: #b7bcc3;">–</span>Needs 4× M3×12 screws and one 40 mm hygrometer.</div>
+                </div>
+                <div style="margin-top: auto; padding: 10px 14px; border-top: 1px solid #eef0f2; display: flex; flex-wrap: wrap; gap: 5px;">
+                  <span style="font-size: 12px; padding: 3px 7px; background: #e5e8ec; border-radius: 4px; color: #4b5158;">petg</span>
+                  <span style="font-size: 12px; padding: 3px 7px; background: #e5e8ec; border-radius: 4px; color: #4b5158;">printed</span>
+                  <span style="font-size: 12px; padding: 3px 7px; background: #e5e8ec; border-radius: 4px; color: #4b5158;">multi-part</span>
+                  <span style="font-size: 12px; padding: 3px 7px; border: 1px dashed #cbd0d6; border-radius: 4px; color: #8b929c;">+ tag</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="1d" style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: baseline; gap: 12px;">
+        <span style="display: inline-block; background: #14171a; color: #fff; font-size: 13px; font-weight: 700; padding: 3px 9px; border-radius: 4px;">1d</span>
+        <span style="font-size: 15px; font-weight: 600; color: #14171a;">Model detail — dark</span>
+        <span style="font-size: 13px; color: #4b5158;">same layout, dark theme</span>
+      </div>
+      <div style="width: 1440px; height: 900px; display: flex; background: #16181b; color: #e6e8ea; border: 1px solid #34383d; box-shadow: 0 8px 28px rgba(0,0,0,.28); overflow: hidden;">
+
+        <div style="width: 248px; flex: none; background: #131518; border-right: 1px solid #2b2f34; display: flex; flex-direction: column;">
+          <div style="padding: 18px 16px 12px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="width: 14px; height: 14px; background: #6f9bff; border-radius: 3px;"></div>
+              <div style="font-size: 14px; font-weight: 700; letter-spacing: -.01em;">3D Library</div>
+            </div>
+            <input type="text" value="Search models" style="width: 100%; padding: 7px 9px; font-size: 13px; color: #9aa1a9; background: #1d2023; border: 1px solid #333940; border-radius: 5px;" style-focus="border-color: #6f9bff; box-shadow: 0 0 0 2px rgba(111,155,255,.4);">
+          </div>
+          <div style="flex: 1; overflow: hidden; padding: 0 8px; display: flex; flex-direction: column; gap: 16px;">
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #7b828a; padding: 0 8px 6px;">Library</div>
+              <div style="display: flex; flex-direction: column;">
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px; border-radius: 5px;">All models<span style="color: #7b828a;">312</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px; border-radius: 5px;">Recently added<span style="color: #7b828a;">18</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px; border-radius: 5px;">Uncategorized<span style="color: #7b828a;">27</span></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #7b828a; padding: 0 8px 6px;">Categories</div>
+              <div style="display: flex; flex-direction: column;">
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px; border-radius: 5px; background: #23293a; font-weight: 600;">
+                  <span style="width: 8px; height: 8px; border-radius: 2px; background: #58b07d;"></span>Functional<span style="margin-left: auto; color: #9aa1a9; font-weight: 400;">96</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 24px; font-size: 13px; color: #b6bcc3;">Enclosures<span style="margin-left: auto; color: #7b828a;">14</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 24px; font-size: 13px; color: #b6bcc3;">Storage<span style="margin-left: auto; color: #7b828a;">31</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px; border-radius: 5px;">
+                  <span style="width: 8px; height: 8px; border-radius: 2px; background: #b678d4;"></span>Miniatures<span style="margin-left: auto; color: #7b828a;">64</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px; border-radius: 5px;">
+                  <span style="width: 8px; height: 8px; border-radius: 2px; background: #6f9bff;"></span>Tools &amp; jigs<span style="margin-left: auto; color: #7b828a;">52</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px; border-radius: 5px;">
+                  <span style="width: 8px; height: 8px; border-radius: 2px; background: #d9a24f;"></span>Toys<span style="margin-left: auto; color: #7b828a;">45</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px; border-radius: 5px;">
+                  <span style="width: 8px; height: 8px; border-radius: 2px; background: #d47676;"></span>Household<span style="margin-left: auto; color: #7b828a;">55</span>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #7b828a; padding: 0 8px 6px;">Collections</div>
+              <div style="display: flex; flex-direction: column;">
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Voron 0.2 build<span style="color: #7b828a;">41</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Garage overhaul<span style="color: #7b828a;">12</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Gifts 2026<span style="color: #7b828a;">7</span></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #7b828a; padding: 0 8px 6px;">Tags</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 5px; padding: 0 8px;">
+                <span style="font-size: 12px; padding: 3px 7px; background: #262b30; border-radius: 4px; color: #b6bcc3;">petg</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #262b30; border-radius: 4px; color: #b6bcc3;">printed</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #262b30; border-radius: 4px; color: #b6bcc3;">supports-free</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #262b30; border-radius: 4px; color: #b6bcc3;">multi-part</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #262b30; border-radius: 4px; color: #b6bcc3;">remix</span>
+              </div>
+            </div>
+          </div>
+          <div style="padding: 12px 16px; border-top: 1px solid #2b2f34; display: flex; justify-content: space-between; font-size: 13px; color: #b6bcc3;">
+            <span>Settings</span><span style="color: #7b828a;">v2.4.1</span>
+          </div>
+        </div>
+
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+          <div style="padding: 20px 32px 0; display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; align-items: center; gap: 7px; font-size: 13px; color: #9aa1a9;">
+              <span style="color: #6f9bff;">Library</span><span style="color: #565c63;">/</span><span style="color: #6f9bff;">Functional</span><span style="color: #565c63;">/</span><span style="color: #6f9bff;">Enclosures</span><span style="color: #565c63;">/</span><span style="color: #e6e8ea;">Filament Dry Box</span>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 16px;">
+              <div style="min-width: 0;">
+                <h1 style="margin: 0 0 6px; font-size: 25px; font-weight: 600; letter-spacing: -.015em;">Filament Dry Box</h1>
+                <div style="display: flex; align-items: center; gap: 10px; font-size: 13px; color: #9aa1a9;">
+                  <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; background: #1e2c24; color: #79c199; border-radius: 4px; font-weight: 600;"><span style="width: 7px; height: 7px; border-radius: 2px; background: #58b07d;"></span>Functional</span>
+                  <span>7 files · 184 MB</span>
+                  <span style="color: #565c63;">·</span>
+                  <span>Added 12 Mar 2026</span>
+                  <span style="color: #565c63;">·</span>
+                  <span style="color: #6f9bff;">printables.com/model/48213</span>
+                </div>
+              </div>
+              <div style="margin-left: auto; display: flex; gap: 8px; flex: none;">
+                <button style="padding: 7px 13px; font-size: 13px; background: #1d2023; border: 1px solid #333940; border-radius: 5px; color: #e6e8ea;" style-hover="background: #262b30;">Edit</button>
+                <button style="padding: 7px 13px; font-size: 13px; background: #1d2023; border: 1px solid #333940; border-radius: 5px; color: #e6e8ea;" style-hover="background: #262b30;">Add files</button>
+                <button style="padding: 7px 13px; font-size: 13px; background: #3f6fd8; border: 1px solid #3f6fd8; border-radius: 5px; color: #fff; font-weight: 600;" style-hover="background: #3560c2;">Open in slicer</button>
+              </div>
+            </div>
+          </div>
+
+          <div style="flex: 1; min-height: 0; padding: 18px 32px 24px; display: grid; grid-template-columns: 1fr 392px; gap: 20px;">
+            <div style="min-width: 0; display: flex; flex-direction: column; gap: 20px;">
+              <div style="flex: none; height: 392px; background: #1d2023; border: 1px solid #2b2f34; border-radius: 7px; display: flex; flex-direction: column; overflow: hidden;">
+                <div style="display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-bottom: 1px solid #2b2f34;">
+                  <span style="padding: 5px 10px; font-size: 13px; border-radius: 5px; background: #23293a; color: #9dbaff; font-weight: 600;">dry-box-body.3mf</span>
+                  <span style="padding: 5px 10px; font-size: 13px; color: #b6bcc3;">lid.stl</span>
+                  <span style="padding: 5px 10px; font-size: 13px; color: #b6bcc3;">plate-1.gcode</span>
+                  <span style="padding: 5px 10px; font-size: 13px; color: #b6bcc3;">assembly.jpg</span>
+                  <span style="margin-left: auto; font-size: 12px; color: #7b828a; padding-right: 4px;">Wireframe · Solid · X-ray</span>
+                </div>
+                <div style="flex: 1; background-color: #16181b; background-image: repeating-linear-gradient(45deg, #1c1f23 0 8px, #16181b 8px 16px); display: flex; align-items: center; justify-content: center; position: relative;">
+                  <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #9aa1a9; background: #1d2023; border: 1px solid #333940; padding: 4px 9px; border-radius: 4px;">3D mesh preview</span>
+                  <span style="position: absolute; left: 12px; bottom: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #9aa1a9;">220 × 180 × 145 mm · 4 objects</span>
+                  <span style="position: absolute; right: 12px; bottom: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #9aa1a9;">Bambu X1C · 256³ build volume</span>
+                </div>
+              </div>
+
+              <div style="flex: 1; min-height: 0; background: #1d2023; border: 1px solid #2b2f34; border-radius: 7px; display: flex; flex-direction: column; overflow: hidden;">
+                <div style="display: flex; align-items: center; padding: 11px 14px; border-bottom: 1px solid #2b2f34;">
+                  <div style="font-size: 13px; font-weight: 700;">Files</div>
+                  <div style="margin-left: auto; font-size: 12px; color: #7b828a;">7 files · 184 MB</div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 92px 84px 120px; padding: 7px 14px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #7b828a; border-bottom: 1px solid #24282c;">
+                  <span>Name</span><span>Type</span><span>Size</span><span>Added</span>
+                </div>
+                <sc-for list="{{ files }}" as="f" hint-placeholder-count="5">
+                  <div style="display: grid; grid-template-columns: 1fr 92px 84px 120px; align-items: center; padding: 9px 14px; font-size: 13px; border-bottom: 1px solid #23272b;">
+                    <span style="display: flex; align-items: center; gap: 9px; min-width: 0;">
+                      <span style="width: 22px; height: 22px; flex: none; border-radius: 3px; background-color: #16181b; background-image: repeating-linear-gradient(45deg, #22262a 0 4px, #16181b 4px 8px);"></span>
+                      <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ f.name }}</span>
+                    </span>
+                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #b6bcc3;">{{ f.type }}</span>
+                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #b6bcc3;">{{ f.size }}</span>
+                    <span style="font-size: 12px; color: #7b828a;">{{ f.added }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="min-width: 0; display: flex; flex-direction: column; gap: 20px; overflow: hidden;">
+              <div style="background: #1d2023; border: 1px solid #2b2f34; border-radius: 7px; overflow: hidden;">
+                <div style="display: flex; align-items: center; padding: 11px 14px; border-bottom: 1px solid #2b2f34;">
+                  <div style="font-size: 13px; font-weight: 700;">Slice settings</div>
+                  <div style="margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #7b828a;">from plate-1.gcode</div>
+                </div>
+                <div style="padding: 4px 14px 12px;">
+                  <sc-for list="{{ meta }}" as="m" hint-placeholder-count="9">
+                    <div style="display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-bottom: 1px solid #24282c;">
+                      <span style="font-size: 12px; color: #9aa1a9; width: 132px; flex: none;">{{ m.k }}</span>
+                      <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; color: #e6e8ea;">{{ m.v }}</span>
+                    </div>
+                  </sc-for>
+                  <div style="padding-top: 9px; font-size: 12px; color: #7b828a;">Detected slicer: OrcaSlicer 2.1.1 · <span style="color: #6f9bff;">all 24 fields</span></div>
+                </div>
+              </div>
+
+              <div style="background: #1d2023; border: 1px solid #2b2f34; border-radius: 7px; overflow: hidden;">
+                <div style="padding: 11px 14px; border-bottom: 1px solid #2b2f34; font-size: 13px; font-weight: 700;">Versions</div>
+                <div style="padding: 8px 14px 12px;">
+                  <div style="display: flex; align-items: center; gap: 9px; padding: 6px 0;">
+                    <span style="width: 9px; height: 9px; border-radius: 50%; background: #6f9bff;"></span>
+                    <span style="font-size: 13px; font-weight: 600;">final — desiccant tray fix</span>
+                    <span style="margin-left: auto; font-size: 12px; color: #7b828a;">12 Mar</span>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 9px; padding: 6px 0 6px 18px; border-left: 1px solid #2b2f34; margin-left: 4px;">
+                    <span style="font-size: 13px; color: #b6bcc3;">v2 — thicker lid gasket</span>
+                    <span style="margin-left: auto; font-size: 12px; color: #7b828a;">28 Feb</span>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 9px; padding: 6px 0 6px 18px; border-left: 1px solid #2b2f34; margin-left: 4px;">
+                    <span style="font-size: 13px; color: #b6bcc3;">v1 — original download</span>
+                    <span style="margin-left: auto; font-size: 12px; color: #7b828a;">19 Feb</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="flex: 1; min-height: 0; background: #1d2023; border: 1px solid #2b2f34; border-radius: 7px; overflow: hidden; display: flex; flex-direction: column;">
+                <div style="padding: 11px 14px; border-bottom: 1px solid #2b2f34; font-size: 13px; font-weight: 700;">Print tips</div>
+                <div style="padding: 10px 14px; display: flex; flex-direction: column; gap: 7px;">
+                  <div style="display: flex; gap: 8px; font-size: 13px; line-height: 1.45; color: #d3d7db;"><span style="color: #565c63;">–</span>PETG at 245 °C, bed 80 °C. PLA warps at the hinge.</div>
+                  <div style="display: flex; gap: 8px; font-size: 13px; line-height: 1.45; color: #d3d7db;"><span style="color: #565c63;">–</span>Print the lid flat side down, no supports needed.</div>
+                  <div style="display: flex; gap: 8px; font-size: 13px; line-height: 1.45; color: #d3d7db;"><span style="color: #565c63;">–</span>Needs 4× M3×12 screws and one 40 mm hygrometer.</div>
+                </div>
+                <div style="margin-top: auto; padding: 10px 14px; border-top: 1px solid #24282c; display: flex; flex-wrap: wrap; gap: 5px;">
+                  <span style="font-size: 12px; padding: 3px 7px; background: #262b30; border-radius: 4px; color: #b6bcc3;">petg</span>
+                  <span style="font-size: 12px; padding: 3px 7px; background: #262b30; border-radius: 4px; color: #b6bcc3;">printed</span>
+                  <span style="font-size: 12px; padding: 3px 7px; background: #262b30; border-radius: 4px; color: #b6bcc3;">multi-part</span>
+                  <span style="font-size: 12px; padding: 3px 7px; border: 1px dashed #3a4046; border-radius: 4px; color: #7b828a;">+ tag</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="1a" style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: baseline; gap: 12px;">
+        <span style="display: inline-block; background: #14171a; color: #fff; font-size: 13px; font-weight: 700; padding: 3px 9px; border-radius: 4px;">1a</span>
+        <span style="font-size: 15px; font-weight: 600; color: #14171a;">Library grid — take A, tiles</span>
+        <span style="font-size: 13px; color: #4b5158;">light</span>
+      </div>
+      <div style="width: 1440px; height: 900px; display: flex; background: #f7f8f9; color: #14171a; border: 1px solid #b0b6bc; box-shadow: 0 8px 28px rgba(0,0,0,.14); overflow: hidden;">
+        <div style="width: 248px; flex: none; background: #f0f2f4; border-right: 1px solid #e2e5e9; display: flex; flex-direction: column;">
+          <div style="padding: 18px 16px 12px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="width: 14px; height: 14px; background: #2f62d8; border-radius: 3px;"></div>
+              <div style="font-size: 14px; font-weight: 700; letter-spacing: -.01em;">3D Library</div>
+            </div>
+            <input type="text" value="Search models" style="width: 100%; padding: 7px 9px; font-size: 13px; color: #6b7280; background: #fff; border: 1px solid #d7dbe0; border-radius: 5px;" style-focus="border-color: #2f62d8; box-shadow: 0 0 0 2px rgba(47,98,216,.4);">
+          </div>
+          <div style="flex: 1; overflow: hidden; padding: 0 8px; display: flex; flex-direction: column; gap: 16px;">
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #8b929c; padding: 0 8px 6px;">Library</div>
+              <div style="display: flex; flex-direction: column;">
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px; border-radius: 5px; background: #e2eafb; font-weight: 600;">All models<span style="color: #6b7280; font-weight: 400;">312</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Recently added<span style="color: #8b929c;">18</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Uncategorized<span style="color: #8b929c;">27</span></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #8b929c; padding: 0 8px 6px;">Categories</div>
+              <div style="display: flex; flex-direction: column;">
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #3f8f5e;"></span>Functional<span style="margin-left: auto; color: #8b929c;">96</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #a05ac0;"></span>Miniatures<span style="margin-left: auto; color: #8b929c;">64</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #2f62d8;"></span>Tools &amp; jigs<span style="margin-left: auto; color: #8b929c;">52</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #d08a2c;"></span>Toys<span style="margin-left: auto; color: #8b929c;">45</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #c05a5a;"></span>Household<span style="margin-left: auto; color: #8b929c;">55</span></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #8b929c; padding: 0 8px 6px;">Collections</div>
+              <div style="display: flex; flex-direction: column;">
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Voron 0.2 build<span style="color: #8b929c;">41</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Garage overhaul<span style="color: #8b929c;">12</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Gifts 2026<span style="color: #8b929c;">7</span></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #8b929c; padding: 0 8px 6px;">Tags</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 5px; padding: 0 8px;">
+                <span style="font-size: 12px; padding: 3px 7px; background: #e5e8ec; border-radius: 4px; color: #4b5158;">petg</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #e5e8ec; border-radius: 4px; color: #4b5158;">printed</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #e5e8ec; border-radius: 4px; color: #4b5158;">supports-free</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #e5e8ec; border-radius: 4px; color: #4b5158;">multi-part</span>
+              </div>
+            </div>
+          </div>
+          <div style="padding: 12px 16px; border-top: 1px solid #e2e5e9; display: flex; justify-content: space-between; font-size: 13px; color: #4b5158;">
+            <span>Settings</span><span style="color: #8b929c;">v2.4.1</span>
+          </div>
+        </div>
+
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+          <div style="padding: 20px 32px 14px; display: flex; align-items: flex-end; gap: 16px; border-bottom: 1px solid #e2e5e9;">
+            <div>
+              <div style="font-size: 13px; color: #6b7280; margin-bottom: 5px;">Library</div>
+              <h1 style="margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -.015em;">All models</h1>
+            </div>
+            <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 13px; color: #6b7280;">Sort</span>
+              <select style="padding: 6px 10px; font-size: 13px; background: #fff; border: 1px solid #d7dbe0; border-radius: 5px; color: #14171a;" style-focus="border-color: #2f62d8; box-shadow: 0 0 0 2px rgba(47,98,216,.4);">
+                <option>Recently added</option>
+              </select>
+              <button style="padding: 7px 13px; font-size: 13px; background: #2f62d8; border: 1px solid #2f62d8; border-radius: 5px; color: #fff; font-weight: 600;" style-hover="background: #2653bb;">Upload</button>
+            </div>
+          </div>
+          <div style="padding: 12px 32px; display: flex; align-items: center; gap: 7px; border-bottom: 1px solid #e2e5e9;">
+            <span style="font-size: 12.5px; padding: 4px 10px; background: #e2eafb; color: #1b47ab; border: 1px solid #c6d5f6; border-radius: 999px; font-weight: 600;">Functional ×</span>
+            <span style="font-size: 12.5px; padding: 4px 10px; background: #e2eafb; color: #1b47ab; border: 1px solid #c6d5f6; border-radius: 999px; font-weight: 600;">petg ×</span>
+            <span style="font-size: 12.5px; padding: 4px 10px; background: #fff; color: #6b7280; border: 1px dashed #cbd0d6; border-radius: 999px;">+ filter</span>
+            <span style="margin-left: auto; font-size: 12.5px; color: #6b7280;">41 models · page 1 of 2</span>
+          </div>
+
+          <div style="flex: 1; min-height: 0; padding: 22px 32px; overflow: hidden;">
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;">
+              <sc-for list="{{ models }}" as="m" hint-placeholder-count="8">
+                <div style="background: #fff; border: 1px solid #e2e5e9; border-radius: 7px; overflow: hidden; display: flex; flex-direction: column;" style-hover="border-color: #b9c3d4;">
+                  <div style="height: 168px; background-color: #eceff2; background-image: repeating-linear-gradient(45deg, #e4e8ec 0 8px, #eceff2 8px 16px); display: flex; align-items: center; justify-content: center; position: relative;">
+                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #6b7280;">thumbnail</span>
+                    <span style="position: absolute; top: 8px; right: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: #4b5158; background: rgba(255,255,255,.9); padding: 2px 6px; border-radius: 3px;">{{ m.files }}</span>
+                  </div>
+                  <div style="padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px;">
+                    <div style="font-size: 13.5px; font-weight: 600; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ m.name }}</div>
+                    <div style="display: flex; align-items: center; gap: 7px; font-size: 12px; color: #6b7280;">
+                      <span style="width: 7px; height: 7px; border-radius: 2px; background: #8b929c; flex: none;"></span>{{ m.cat }}
+                      <span style="margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: #8b929c;">{{ m.size }}</span>
+                    </div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="1b" style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: baseline; gap: 12px;">
+        <span style="display: inline-block; background: #14171a; color: #fff; font-size: 13px; font-weight: 700; padding: 3px 9px; border-radius: 4px;">1b</span>
+        <span style="font-size: 15px; font-weight: 600; color: #14171a;">Library grid — take B, wide rows</span>
+        <span style="font-size: 13px; color: #4b5158;">dark · metadata beside the thumbnail</span>
+      </div>
+      <div style="width: 1440px; height: 900px; display: flex; background: #16181b; color: #e6e8ea; border: 1px solid #34383d; box-shadow: 0 8px 28px rgba(0,0,0,.28); overflow: hidden;">
+        <div style="width: 248px; flex: none; background: #131518; border-right: 1px solid #2b2f34; display: flex; flex-direction: column;">
+          <div style="padding: 18px 16px 12px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="width: 14px; height: 14px; background: #6f9bff; border-radius: 3px;"></div>
+              <div style="font-size: 14px; font-weight: 700; letter-spacing: -.01em;">3D Library</div>
+            </div>
+            <input type="text" value="Search models" style="width: 100%; padding: 7px 9px; font-size: 13px; color: #9aa1a9; background: #1d2023; border: 1px solid #333940; border-radius: 5px;" style-focus="border-color: #6f9bff; box-shadow: 0 0 0 2px rgba(111,155,255,.4);">
+          </div>
+          <div style="flex: 1; overflow: hidden; padding: 0 8px; display: flex; flex-direction: column; gap: 16px;">
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #7b828a; padding: 0 8px 6px;">Library</div>
+              <div style="display: flex; flex-direction: column;">
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px; border-radius: 5px; background: #23293a; font-weight: 600;">All models<span style="color: #9aa1a9; font-weight: 400;">312</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Recently added<span style="color: #7b828a;">18</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Uncategorized<span style="color: #7b828a;">27</span></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #7b828a; padding: 0 8px 6px;">Categories</div>
+              <div style="display: flex; flex-direction: column;">
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #58b07d;"></span>Functional<span style="margin-left: auto; color: #7b828a;">96</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #b678d4;"></span>Miniatures<span style="margin-left: auto; color: #7b828a;">64</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #6f9bff;"></span>Tools &amp; jigs<span style="margin-left: auto; color: #7b828a;">52</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #d9a24f;"></span>Toys<span style="margin-left: auto; color: #7b828a;">45</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #d47676;"></span>Household<span style="margin-left: auto; color: #7b828a;">55</span></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #7b828a; padding: 0 8px 6px;">Collections</div>
+              <div style="display: flex; flex-direction: column;">
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Voron 0.2 build<span style="color: #7b828a;">41</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Garage overhaul<span style="color: #7b828a;">12</span></div>
+                <div style="display: flex; justify-content: space-between; padding: 6px 8px; font-size: 13px;">Gifts 2026<span style="color: #7b828a;">7</span></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #7b828a; padding: 0 8px 6px;">Tags</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 5px; padding: 0 8px;">
+                <span style="font-size: 12px; padding: 3px 7px; background: #262b30; border-radius: 4px; color: #b6bcc3;">petg</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #262b30; border-radius: 4px; color: #b6bcc3;">printed</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #262b30; border-radius: 4px; color: #b6bcc3;">supports-free</span>
+                <span style="font-size: 12px; padding: 3px 7px; background: #262b30; border-radius: 4px; color: #b6bcc3;">multi-part</span>
+              </div>
+            </div>
+          </div>
+          <div style="padding: 12px 16px; border-top: 1px solid #2b2f34; display: flex; justify-content: space-between; font-size: 13px; color: #b6bcc3;">
+            <span>Settings</span><span style="color: #7b828a;">v2.4.1</span>
+          </div>
+        </div>
+
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+          <div style="padding: 20px 32px 14px; display: flex; align-items: flex-end; gap: 16px; border-bottom: 1px solid #2b2f34;">
+            <div>
+              <div style="font-size: 13px; color: #9aa1a9; margin-bottom: 5px;">Library</div>
+              <h1 style="margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -.015em;">All models</h1>
+            </div>
+            <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 13px; color: #9aa1a9;">Sort</span>
+              <select style="padding: 6px 10px; font-size: 13px; background: #1d2023; border: 1px solid #333940; border-radius: 5px; color: #e6e8ea;" style-focus="border-color: #6f9bff; box-shadow: 0 0 0 2px rgba(111,155,255,.4);">
+                <option>Recently added</option>
+              </select>
+              <button style="padding: 7px 13px; font-size: 13px; background: #3f6fd8; border: 1px solid #3f6fd8; border-radius: 5px; color: #fff; font-weight: 600;" style-hover="background: #3560c2;">Upload</button>
+            </div>
+          </div>
+          <div style="padding: 12px 32px; display: flex; align-items: center; gap: 7px; border-bottom: 1px solid #2b2f34;">
+            <span style="font-size: 12.5px; padding: 4px 10px; background: #23293a; color: #9dbaff; border: 1px solid #33405c; border-radius: 999px; font-weight: 600;">Functional ×</span>
+            <span style="font-size: 12.5px; padding: 4px 10px; background: #23293a; color: #9dbaff; border: 1px solid #33405c; border-radius: 999px; font-weight: 600;">petg ×</span>
+            <span style="font-size: 12.5px; padding: 4px 10px; background: transparent; color: #9aa1a9; border: 1px dashed #3a4046; border-radius: 999px;">+ filter</span>
+            <span style="margin-left: auto; font-size: 12.5px; color: #9aa1a9;">41 models · page 1 of 2</span>
+          </div>
+
+          <div style="flex: 1; min-height: 0; padding: 20px 32px; overflow: hidden; display: flex; flex-direction: column; gap: 14px;">
+            <sc-for list="{{ rows }}" as="m" hint-placeholder-count="4">
+              <div style="display: flex; gap: 18px; background: #1d2023; border: 1px solid #2b2f34; border-radius: 7px; padding: 14px; align-items: stretch;" style-hover="border-color: #3d444c;">
+                <div style="width: 210px; height: 132px; flex: none; border-radius: 5px; background-color: #16181b; background-image: repeating-linear-gradient(45deg, #1c1f23 0 8px, #16181b 8px 16px); display: flex; align-items: center; justify-content: center;">
+                  <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #7b828a;">thumbnail</span>
+                </div>
+                <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px;">
+                  <div style="display: flex; align-items: baseline; gap: 10px;">
+                    <div style="font-size: 16px; font-weight: 600; letter-spacing: -.01em;">{{ m.name }}</div>
+                    <span style="font-size: 12px; color: #9aa1a9;">{{ m.cat }}</span>
+                    <span style="margin-left: auto; font-size: 12px; color: #7b828a;">{{ m.added }}</span>
+                  </div>
+                  <div style="font-size: 13px; color: #b6bcc3; line-height: 1.4; overflow: hidden;">{{ m.desc }}</div>
+                  <div style="display: flex; gap: 22px; margin-top: auto;">
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                      <span style="font-size: 11px; color: #7b828a;">Files</span>
+                      <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;">{{ m.files }}</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                      <span style="font-size: 11px; color: #7b828a;">Size</span>
+                      <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;">{{ m.size }}</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                      <span style="font-size: 11px; color: #7b828a;">Print time</span>
+                      <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;">{{ m.time }}</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                      <span style="font-size: 11px; color: #7b828a;">Filament</span>
+                      <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;">{{ m.filament }}</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                      <span style="font-size: 11px; color: #7b828a;">Versions</span>
+                      <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;">{{ m.versions }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1600,&quot;height&quot;:1000}}">
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      files: [
+        { name: "dry-box-body.3mf", type: "3mf", size: "42.1 MB", added: "12 Mar 2026" },
+        { name: "lid.stl", type: "stl", size: "18.4 MB", added: "12 Mar 2026" },
+        { name: "hinge-bracket.stl", type: "stl", size: "3.2 MB", added: "12 Mar 2026" },
+        { name: "plate-1.gcode", type: "gcode", size: "96.7 MB", added: "12 Mar 2026" },
+        { name: "desiccant-tray.step", type: "step", size: "21.9 MB", added: "28 Feb 2026" },
+        { name: "assembly.jpg", type: "image", size: "1.4 MB", added: "19 Feb 2026" },
+        { name: "bom.pdf", type: "document", size: "212 KB", added: "19 Feb 2026" }
+      ],
+      meta: [
+        { k: "Layer height", v: "0.20 mm" },
+        { k: "Infill", v: "15% gyroid" },
+        { k: "Wall loops", v: "3" },
+        { k: "Top / bottom", v: "5 / 4" },
+        { k: "Nozzle / bed", v: "245 °C / 80 °C" },
+        { k: "Print time", v: "9 h 42 m" },
+        { k: "Filament", v: "184.2 g · 61.7 m · PETG" },
+        { k: "Est. cost", v: "$4.61" },
+        { k: "Supports", v: "none" },
+        { k: "Printer", v: "Bambu Lab X1 Carbon" }
+      ],
+      models: [
+        { name: "Filament Dry Box", cat: "Functional", files: "7 files", size: "184 MB" },
+        { name: "Voron 0.2 Skirt Panels", cat: "Functional", files: "12 files", size: "96 MB" },
+        { name: "Hex Bit Holder", cat: "Tools & jigs", files: "3 files", size: "11 MB" },
+        { name: "Gridfinity Base 4×4", cat: "Household", files: "5 files", size: "34 MB" },
+        { name: "Articulated Dragon", cat: "Toys", files: "2 files", size: "78 MB" },
+        { name: "Dice Tower — Keep", cat: "Miniatures", files: "9 files", size: "142 MB" },
+        { name: "Drill Guide Jig", cat: "Tools & jigs", files: "4 files", size: "8 MB" },
+        { name: "Cable Comb 6-way", cat: "Household", files: "2 files", size: "3 MB" }
+      ],
+      rows: [
+        { name: "Filament Dry Box", cat: "Functional", added: "12 Mar 2026", desc: "Sealed PETG enclosure for two 1 kg spools, with hygrometer cutout and a desiccant tray in the base.", files: "7", size: "184 MB", time: "9 h 42 m", filament: "184 g PETG", versions: "3" },
+        { name: "Voron 0.2 Skirt Panels", cat: "Functional", added: "9 Mar 2026", desc: "Full skirt set cut for the 120 mm frame. Includes the alternate rear panel with the wider umbilical pass-through.", files: "12", size: "96 MB", time: "6 h 05 m", filament: "121 g ABS", versions: "2" },
+        { name: "Gridfinity Base 4×4", cat: "Household", added: "4 Mar 2026", desc: "Standard baseplate, magnet holes included. Prints without supports on a textured plate.", files: "5", size: "34 MB", time: "3 h 18 m", filament: "62 g PLA", versions: "1" },
+        { name: "Dice Tower — Keep", cat: "Miniatures", added: "1 Mar 2026", desc: "Four-part tower with a separate tray. Stone texture reads best at 0.12 mm layers.", files: "9", size: "142 MB", time: "14 h 20 m", filament: "298 g PLA", versions: "2" }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
