@@ -1,6 +1,7 @@
 <script lang="ts">
   import { formatBytes, formatFileCount } from '$lib/format';
   import Thumbnail from '$lib/components/Thumbnail.svelte';
+  import CategoryBadge from '$lib/components/CategoryBadge.svelte';
   import type { Model } from '$lib/upload';
 
   let { model }: { model: Model } = $props();
@@ -38,8 +39,14 @@
   </div>
   <div class="px-3.5 py-3">
     <h2 class="truncate text-sm font-medium" title={model.name}>{model.name}</h2>
-    <p class="mt-1 text-xs text-muted">
-      {formatFileCount(model.fileCount)} · {formatBytes(model.totalSize)}
-    </p>
+    <!-- The category and the size share a row, as in the design's grid. The
+         badge renders nothing when the model is uncategorized, which leaves
+         the size where it already was rather than a placeholder word. -->
+    <div class="mt-1 flex items-center gap-2 text-xs text-muted">
+      <CategoryBadge category={model.category} size="sm" />
+      <span class="ml-auto shrink-0">
+        {formatFileCount(model.fileCount)} · {formatBytes(model.totalSize)}
+      </span>
+    </div>
   </div>
 </a>

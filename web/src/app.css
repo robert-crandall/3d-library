@@ -29,6 +29,13 @@
   --color-accent-ink: #ffffff;
   --color-danger: #b42318;
 
+  /* Added by milestone 7. A tag chip and a selected sidebar row are the two
+     surfaces the design tints, and neither matches anything already named:
+     --color-line is a hairline, not a fill. Category colours are not here on
+     purpose - those are per-user data and ride in an inline style. */
+  --color-chip: #e5e8ec;
+  --color-selected: #e2eafb;
+
   --radius-tile: 7px;
 }
 
@@ -44,6 +51,9 @@
   --color-accent: #6f9bff;
   --color-accent-ink: #10131a;
   --color-danger: #f97066;
+
+  --color-chip: #262b30;
+  --color-selected: #23293a;
 }
 
 html {

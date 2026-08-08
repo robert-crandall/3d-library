@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import Modal from './Modal.svelte';
+  import { library } from '$lib/library.svelte';
   import type { ModelDetail } from '$lib/upload';
 
   let {
@@ -21,6 +22,9 @@
       description: string;
       printTips: string;
       sourceUrl: string;
+      categoryId: number | null;
+      tagIds: number[];
+      materialIds: number[];
     }) => void;
     oncancel: () => void;
   } = $props();
@@ -34,9 +38,23 @@
       name: model.name,
       description: model.description,
       printTips: model.printTips,
-      sourceUrl: model.sourceUrl
+      sourceUrl: model.sourceUrl,
+      // '' rather than null, because a <select> value is a string. It becomes
+      // null again on submit, which is what the server reads as uncategorized.
+      categoryId: model.category ? String(model.category.id) : '',
+      tagIds: model.tags.map((t) => t.id),
+      materialIds: model.materials.map((m) => m.id)
     }))
   );
+
+  // Checkboxes rather than a multi-select or a token input: the whole
+  // vocabulary is the user's own and is short, so showing all of it is both
+  // simpler and a reminder of what exists. New tags are made in Settings; a
+  // create-as-you-type field here would need its own duplicate handling and a
+  // second place that knows the naming rules.
+  function toggle(list: number[], id: number) {
+    return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+  }
 
   // The one rule the server also enforces, checked here so an empty name is
   // caught before a round trip. Everything else - URL shape, lengths - is left
@@ -48,7 +66,15 @@
     event.preventDefault();
     touched = true;
     if (busy || nameEmpty) return;
-    onsave({ ...edits });
+    onsave({
+      name: edits.name,
+      description: edits.description,
+      printTips: edits.printTips,
+      sourceUrl: edits.sourceUrl,
+      categoryId: edits.categoryId === '' ? null : Number(edits.categoryId),
+      tagIds: edits.tagIds,
+      materialIds: edits.materialIds
+    });
   }
 </script>
 
@@ -90,6 +116,44 @@
       maxlength="2000"
       placeholder="https://www.printables.com/model/…"
     />
+
+    <label class="mt-4 block text-sm font-medium" for="edit-category">Category</label>
+    <select
+      id="edit-category"
+      class="mt-1 w-full rounded border border-line-strong px-3 py-2 text-sm"
+      bind:value={edits.categoryId}
+    >
+      <option value="">Uncategorized</option>
+      {#each library.categories as category (category.id)}
+        <option value={String(category.id)}>{category.name}</option>
+      {/each}
+    </select>
+
+    {#each [{ label: 'Tags', options: library.tags, key: 'tagIds' }, { label: 'Materials', options: library.materials, key: 'materialIds' }] as group (group.key)}
+      {#if group.options.length > 0}
+        <fieldset class="mt-4">
+          <legend class="text-sm font-medium">{group.label}</legend>
+          <div class="mt-1 flex flex-wrap gap-x-4 gap-y-1.5">
+            {#each group.options as option (option.id)}
+              <label class="flex items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  class="h-3.5 w-3.5 rounded border border-line-strong"
+                  checked={(group.key === 'tagIds' ? edits.tagIds : edits.materialIds).includes(
+                    option.id
+                  )}
+                  onchange={() => {
+                    if (group.key === 'tagIds') edits.tagIds = toggle(edits.tagIds, option.id);
+                    else edits.materialIds = toggle(edits.materialIds, option.id);
+                  }}
+                />
+                {option.name}
+              </label>
+            {/each}
+          </div>
+        </fieldset>
+      {/if}
+    {/each}
 
     {#if error}
       <p role="alert" class="mt-4 text-sm text-danger">{error}</p>

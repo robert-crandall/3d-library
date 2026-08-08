@@ -44,10 +44,19 @@ const model = {
   description: '',
   printTips: '',
   sourceUrl: '',
-  files: [file]
+  files: [file],
+  tags: [],
+  materials: []
 };
 
 const data = { id: 7 };
+
+/** The page reads the model; the shared taxonomy store reads categories, tags,
+ *  materials and counts through the same mock. Counting only the model reads
+ *  keeps "did it re-read the model" answerable. */
+function modelReads() {
+  return get.mock.calls.filter((call) => String(call[0]).startsWith('/api/models')).length;
+}
 
 // Only the call records are cleared, never the implementations: a `get` reset
 // to its default would return undefined and the component would read `.data`
@@ -243,7 +252,7 @@ describe('model detail page', () => {
     render(ModelPage, { data });
 
     await screen.findByRole('heading', { name: 'Filament Dry Box' });
-    const readsBefore = get.mock.calls.length;
+    const readsBefore = modelReads();
     await fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
 
     const dialog = screen.getByRole('dialog');
@@ -256,8 +265,9 @@ describe('model detail page', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(put.mock.calls[0][1].body.name).toBe('Dry Box v2');
     // The PUT response is the saved model, so a second GET could only be a
-    // chance for the two to disagree.
-    expect(get.mock.calls.length).toBe(readsBefore);
+    // chance for the two to disagree. The sidebar's counts are re-read - the
+    // model may have just joined or left a category - but the model is not.
+    expect(modelReads()).toBe(readsBefore);
   });
 
   // A refused edit has to keep the dialog open with what the user typed still
@@ -565,4 +575,62 @@ describe('model detail thumbnails', () => {
       );
     });
   }
+});
+
+// The taxonomy on the detail page is the only place a model's tags and
+// materials are visible without opening the edit dialog.
+describe('model detail taxonomy', () => {
+  const filed = {
+    ...model,
+    category: { id: 3, name: 'Functional', color: '#3b82f6' },
+    tags: [{ id: 8, name: 'petg' }],
+    materials: [{ id: 2, name: 'PETG' }]
+  };
+
+  it('shows the category, the tags and the materials', async () => {
+    get.mockResolvedValue({ data: filed });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    // The breadcrumb goes back to the filtered grid, which is where a model in
+    // a category is found. A breadcrumb that skips it points at a list the user
+    // was not looking at.
+    expect(screen.getByRole('link', { name: 'Functional' }).getAttribute('href')).toBe(
+      '/?categoryId=3'
+    );
+    // Tags link and materials do not: the sidebar filters by tag, so a tag chip
+    // has somewhere to go. A material chip would be a link to nowhere.
+    expect(screen.getByRole('link', { name: 'petg' }).getAttribute('href')).toBe('/?tagId=8');
+    expect(screen.queryByRole('link', { name: 'PETG' })).toBeNull();
+    expect(screen.getByText('PETG')).toBeTruthy();
+  });
+
+  // An empty "Tags" heading with nothing under it reads as a broken panel, and
+  // most models have neither.
+  it('omits the panel entirely when there is nothing filed', async () => {
+    get.mockResolvedValue({ data: model });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    expect(screen.queryByRole('heading', { name: 'Tags' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Materials' })).toBeNull();
+  });
+
+  // PUT replaces the whole editable surface. Sending the name without the
+  // taxonomy would quietly strip a model of its category and tags every time
+  // someone fixed a typo.
+  it('sends the category, tags and materials with every save', async () => {
+    get.mockResolvedValue({ data: filed });
+    put.mockResolvedValue({ data: filed });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    expect(put.mock.calls[0][1].body.categoryId).toBe(3);
+    expect(put.mock.calls[0][1].body.tagIds).toEqual([8]);
+    expect(put.mock.calls[0][1].body.materialIds).toEqual([2]);
+  });
 });

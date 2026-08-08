@@ -14,7 +14,9 @@ const model = {
   // No thumbnailFileId: the field is omitted when the model has no picture,
   // which is what this fixture is.
   thumbnailAutomatic: true,
-  files: []
+  files: [],
+  tags: [],
+  materials: []
 };
 
 function open(overrides: Record<string, unknown> = {}) {
@@ -25,8 +27,9 @@ function open(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EditModelDialog', () => {
-  // All four, not just the name. PUT replaces the whole editable surface, so a
-  // field this dialog forgot to seed would be silently blanked on save.
+  // Every field, not just the name. PUT replaces the whole editable surface -
+  // including the category, the tags and the materials - so a field this dialog
+  // forgot to seed would be silently blanked on save.
   it('opens with the model already in the fields', () => {
     open();
 
@@ -54,7 +57,13 @@ describe('EditModelDialog', () => {
       name: 'Dry Box v2',
       description: 'Holds four spools.',
       printTips: 'PETG at 245 C.',
-      sourceUrl: 'https://www.printables.com/model/48213'
+      sourceUrl: 'https://www.printables.com/model/48213',
+      // Sent even though this fixture has none of them: omitting a key the
+      // server requires is a 422, and sending null or [] is how "no category"
+      // and "no tags" are said out loud.
+      categoryId: null,
+      tagIds: [],
+      materialIds: []
     });
   });
 
