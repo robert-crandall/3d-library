@@ -25,7 +25,7 @@ describe('uploadModel', () => {
     );
 
     const states: string[] = [];
-    const model = await uploadModel(
+    const { model, failed } = await uploadModel(
       'Benchy',
       [file('a.stl'), file('b.stl'), file('c.stl')],
       (index, state) => states.push(`${index}:${state}`)
@@ -49,6 +49,7 @@ describe('uploadModel', () => {
     // The re-read is what gives the grid the real counts; the create response
     // only ever knows about its own file.
     expect(model.fileCount).toBe(3);
+    expect(failed).toEqual([]);
   });
 
   it('encodes the name so a slash or an ampersand cannot break the URL', async () => {
@@ -66,33 +67,58 @@ describe('uploadModel', () => {
     expect(seen[0]).toBe('/api/models?name=Gears%20%26%20bolts%2Fv2');
   });
 
-  // Sequential matters: file 2 cannot start before file 1 returns the id it
-  // needs. A failure therefore has to stop the run rather than press on.
-  it('stops at the first failure and reports which file failed', async () => {
+  // The failure that matters most: the model already exists by then. Throwing
+  // it away would leave a row the user can neither see nor delete, and pressing
+  // Upload again would make a second copy of it.
+  it('returns the model when a later file fails, and keeps going', async () => {
     let call = 0;
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        if (!init) return ok({ id: 3, name: 'Half', fileCount: 2 });
         call += 1;
-        if (call === 1) return ok({ id: 3, name: 'Half' });
-        return {
-          ok: false,
-          status: 422,
-          json: async () => ({ detail: 'library: invalid upload: bad name' })
-        } as Response;
+        if (call === 1) return ok({ id: 3, name: 'Half', fileCount: 1 });
+        if (call === 2) {
+          return {
+            ok: false,
+            status: 422,
+            json: async () => ({ detail: 'library: invalid upload: bad name' })
+          } as Response;
+        }
+        return ok({ id: 99 });
       })
     );
 
     const states: Array<[number, string, string | undefined]> = [];
-    await expect(
-      uploadModel('Half', [file('a.stl'), file('b.stl'), file('c.stl')], (i, s, e) =>
-        states.push([i, s, e])
-      )
-    ).rejects.toThrow('library: invalid upload: bad name');
+    const { model, failed } = await uploadModel(
+      'Half',
+      [file('a.stl'), file('b.stl'), file('c.stl')],
+      (i, s, e) => states.push([i, s, e])
+    );
 
-    expect(call).toBe(2);
-    expect(states.at(-1)).toEqual([1, 'failed', 'library: invalid upload: bad name']);
-    expect(states.some(([i]) => i === 2)).toBe(false);
+    expect(model.id).toBe(3);
+    expect(failed).toEqual(['b.stl']);
+    // One bad file says nothing about the next one, and this milestone has no
+    // way to add it later, so c.stl still gets its turn.
+    expect(states).toContainEqual([2, 'done', undefined]);
+    expect(states).toContainEqual([1, 'failed', 'library: invalid upload: bad name']);
+  });
+
+  // The mirror image: nothing was created, so there is nothing to report and
+  // retrying is the right thing for the caller to offer.
+  it('throws when the very first file fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 422,
+        json: async () => ({ detail: 'library: invalid upload: bad name' })
+      }) as Response)
+    );
+
+    await expect(uploadModel('Nope', [file('a.stl'), file('b.stl')], () => {})).rejects.toThrow(
+      'library: invalid upload: bad name'
+    );
   });
 
   it('translates a 413 into something about the size limit', async () => {

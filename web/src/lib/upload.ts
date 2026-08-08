@@ -16,6 +16,16 @@ export const MAX_FILE_BYTES = 500 * 1024 * 1024;
 
 export type UploadState = 'queued' | 'uploading' | 'done' | 'failed';
 
+/** What an upload left behind.
+ *
+ *  `failed` is the names of the files that did not make it. It is usually
+ *  empty, and when it is not the model still exists with the rest - which is
+ *  why this is a return value and not an exception. Throwing away the model on
+ *  a partial failure would hide a row the user cannot see, cannot delete (there
+ *  is no delete until a later milestone), and would duplicate the moment they
+ *  pressed Upload again. */
+export type UploadOutcome = { model: Model; failed: string[] };
+
 /**
  * Upload `files` as one model.
  *
@@ -33,15 +43,22 @@ export type UploadState = 'queued' | 'uploading' | 'done' | 'failed';
  *
  * `onState` is called for every file as it moves, so the caller can render
  * progress without this function knowing anything about the UI.
+ *
+ * A failure part-way does not stop the rest: one file being too large says
+ * nothing about the next, and until a later milestone adds "add files to an
+ * existing model" there is no second chance for anything skipped here. Only a
+ * failure on the *first* file throws, because then no model was created and
+ * there is nothing to report.
  */
 export async function uploadModel(
   name: string,
   files: File[],
   onState: (index: number, state: UploadState, error?: string) => void
-): Promise<Model> {
+): Promise<UploadOutcome> {
   if (files.length === 0) throw new Error('Pick at least one file.');
 
   let model: Model | undefined;
+  const failed: string[] = [];
 
   for (const [index, file] of files.entries()) {
     onState(index, 'uploading');
@@ -57,14 +74,19 @@ export async function uploadModel(
     try {
       response = await fetch(url, { method: 'POST', body });
     } catch {
-      onState(index, 'failed', 'Could not reach the server.');
-      throw new Error('Could not reach the server.');
+      const message = 'Could not reach the server.';
+      onState(index, 'failed', message);
+      if (!model) throw new Error(message);
+      failed.push(file.name);
+      continue;
     }
 
     if (!response.ok) {
       const message = await failureMessage(response);
       onState(index, 'failed', message);
-      throw new Error(message);
+      if (!model) throw new Error(message);
+      failed.push(file.name);
+      continue;
     }
 
     onState(index, 'done');
@@ -74,15 +96,22 @@ export async function uploadModel(
     }
   }
 
-  // Unreachable: the loop runs at least once and either assigns or throws.
-  // Narrowing it for the type checker rather than asserting non-null, so a
-  // future edit that breaks the invariant fails loudly instead of at a `.id`.
+  // Unreachable: the loop runs at least once, and its first pass either assigns
+  // `model` or throws. Narrowed rather than asserted non-null, so a future edit
+  // that breaks the invariant fails here instead of at a `.id`.
   if (!model) throw new Error('Upload produced no model.');
 
   // The create response only knows about its own file. Re-read so the caller
-  // gets the real counts for the grid.
-  const refreshed = await fetch(`/api/models/${model.id}`);
-  return refreshed.ok ? ((await refreshed.json()) as Model) : model;
+  // gets the real counts for the grid. A failure here is not worth surfacing:
+  // the model exists either way, and the create response is a true if stale
+  // version of it.
+  try {
+    const refreshed = await fetch(`/api/models/${model.id}`);
+    if (refreshed.ok) model = (await refreshed.json()) as Model;
+  } catch {
+    // Keep what we have.
+  }
+  return { model, failed };
 }
 
 /** huma reports failures as RFC 7807 problem documents; `detail` is the part

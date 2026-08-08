@@ -2,8 +2,13 @@
   import { MAX_FILES, MAX_FILE_BYTES, uploadModel, type Model, type UploadState } from '$lib/upload';
   import { formatBytes } from '$lib/format';
 
-  let { onclose, onuploaded }: { onclose: () => void; onuploaded: (model: Model) => void } =
-    $props();
+  let {
+    onclose,
+    onuploaded
+  }: {
+    onclose: () => void;
+    onuploaded: (model: Model, opts?: { keepOpen?: boolean }) => void;
+  } = $props();
 
   type Queued = { file: File; state: UploadState; error?: string };
 
@@ -11,6 +16,11 @@
   let queue = $state<Queued[]>([]);
   let error = $state('');
   let busy = $state(false);
+  // Set when a model was created but not every file made it. The model is
+  // already in the grid at that point, so the only honest thing left to do is
+  // say what is missing and close - uploading again would make a second copy,
+  // and nothing in this milestone can delete either one.
+  let partial = $state('');
 
   function pick(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
@@ -45,14 +55,20 @@
     error = '';
     busy = true;
     try {
-      const model = await uploadModel(
+      const { model, failed } = await uploadModel(
         name.trim() || 'Untitled',
         queue.map((q) => q.file),
         (index, state, failure) => {
           queue[index] = { ...queue[index], state, error: failure };
         }
       );
-      onuploaded(model);
+      if (failed.length === 0) {
+        onuploaded(model);
+        return;
+      }
+      // Put it in the grid first, so what the user sees matches what exists.
+      onuploaded(model, { keepOpen: true });
+      partial = `${model.name} was created without ${failed.join(', ')}. You can add the rest once editing lands.`;
     } catch (failure) {
       error = failure instanceof Error ? failure.message : 'Upload failed.';
     } finally {
@@ -123,22 +139,36 @@
       <p role="alert" class="mt-4 text-sm text-danger">{error}</p>
     {/if}
 
+    {#if partial}
+      <p role="alert" class="mt-4 text-sm text-danger">{partial}</p>
+    {/if}
+
     <div class="mt-5 flex justify-end gap-2">
-      <button
-        type="button"
-        class="rounded border border-line-strong px-3 py-1.5 text-sm"
-        onclick={onclose}
-        disabled={busy}
-      >
-        Cancel
-      </button>
-      <button
-        type="submit"
-        class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink"
-        disabled={busy || queue.length === 0}
-      >
-        {busy ? 'Uploading…' : 'Upload'}
-      </button>
+      {#if partial}
+        <button
+          type="button"
+          class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink"
+          onclick={onclose}
+        >
+          Done
+        </button>
+      {:else}
+        <button
+          type="button"
+          class="rounded border border-line-strong px-3 py-1.5 text-sm"
+          onclick={onclose}
+          disabled={busy}
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink"
+          disabled={busy || queue.length === 0}
+        >
+          {busy ? 'Uploading…' : 'Upload'}
+        </button>
+      {/if}
     </div>
   </form>
 </div>

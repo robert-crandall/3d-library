@@ -76,12 +76,16 @@ func registerCreate(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 			"POST /api/models/{id}/files, one request each. The model is " +
 			"created by its first file so that a failed upload leaves no " +
 			"empty entry in the library.",
-		Method:      http.MethodPost,
-		Path:        "/api/models",
-		Tags:        []string{"library"},
-		Errors:      []int{http.StatusUnauthorized, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity},
-		Security:    apisec.User(api),
-		Middlewares: huma.Middlewares{svc.guardUpload(api, currentUser)},
+		Method: http.MethodPost,
+		Path:   "/api/models",
+		Tags:   []string{"library"},
+		// Declared, not just returned. Setting it only on the output struct
+		// leaves the published spec saying 200 while the server answers 201,
+		// and a generated client believes the spec.
+		DefaultStatus: http.StatusCreated,
+		Errors:        []int{http.StatusUnauthorized, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity},
+		Security:      apisec.User(api),
+		Middlewares:   huma.Middlewares{svc.guardUpload(api, currentUser)},
 
 		// The schema is deliberately opaque. huma buffers and unmarshals the
 		// whole request body whenever an operation declares a request body
@@ -110,7 +114,7 @@ func registerCreate(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 		if err != nil {
 			return nil, uploadError(err)
 		}
-		return &modelOutput{Status: http.StatusCreated, Body: model}, nil
+		return &modelOutput{Body: model}, nil
 	})
 }
 
@@ -129,8 +133,7 @@ func (in *addFileInput) Resolve(ctx huma.Context) []error {
 }
 
 type fileOutput struct {
-	Status int
-	Body   File
+	Body File
 }
 
 func registerAddFile(api huma.API, svc *Service, currentUser CurrentUserFunc) {
@@ -139,12 +142,13 @@ func registerAddFile(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 		Summary:     "Add a file to a model",
 		Description: "Uploads one more file into an existing model. One request " +
 			"carries one file.",
-		Method:      http.MethodPost,
-		Path:        "/api/models/{id}/files",
-		Tags:        []string{"library"},
-		Errors:      []int{http.StatusUnauthorized, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity},
-		Security:    apisec.User(api),
-		Middlewares: huma.Middlewares{svc.guardUpload(api, currentUser)},
+		Method:        http.MethodPost,
+		Path:          "/api/models/{id}/files",
+		Tags:          []string{"library"},
+		DefaultStatus: http.StatusCreated,
+		Errors:        []int{http.StatusUnauthorized, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity},
+		Security:      apisec.User(api),
+		Middlewares:   huma.Middlewares{svc.guardUpload(api, currentUser)},
 
 		// Opaque for the same reason as create-model; see there.
 		RequestBody: &huma.RequestBody{
@@ -168,7 +172,7 @@ func registerAddFile(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 		if err != nil {
 			return nil, uploadError(err)
 		}
-		return &fileOutput{Status: http.StatusCreated, Body: file}, nil
+		return &fileOutput{Body: file}, nil
 	})
 }
 
@@ -230,8 +234,7 @@ func (s *Service) guardUpload(api huma.API, currentUser CurrentUserFunc) func(hu
 }
 
 type modelOutput struct {
-	Status int
-	Body   Model
+	Body Model
 }
 
 type modelsOutput struct {
@@ -287,6 +290,6 @@ func registerGet(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 		if err != nil {
 			return nil, err
 		}
-		return &modelOutput{Status: http.StatusOK, Body: model}, nil
+		return &modelOutput{Body: model}, nil
 	})
 }

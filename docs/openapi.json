@@ -1119,7 +1119,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1127,7 +1127,7 @@
                 }
               }
             },
-            "description": "OK"
+            "description": "Created"
           },
           "401": {
             "content": {
@@ -1294,7 +1294,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1302,7 +1302,7 @@
                 }
               }
             },
-            "description": "OK"
+            "description": "Created"
           },
           "401": {
             "content": {

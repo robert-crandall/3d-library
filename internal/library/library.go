@@ -133,9 +133,6 @@ func maxBodyBytes(perFile int64) int64 {
 	return perFile + 1<<20
 }
 
-// Dir reports where blobs are written. Tests read it to check what landed.
-func (s *Service) Dir() string { return s.dir }
-
 // Model is a library entry. FileCount and TotalSize are derived on read rather
 // than stored: they are one aggregate over an indexed foreign key at
 // single-user scale, and a stored counter would be a cache to invalidate.
@@ -272,9 +269,11 @@ func (s *Service) AddFile(ctx context.Context, userID, modelID int64, parts *mul
 	}
 	defer tx.Rollback(ctx)
 
-	// Re-check ownership inside the transaction. The count above is advisory -
-	// it ran on another connection - and this is the one that actually stops a
-	// file being attached to somebody else's model.
+	// Re-check ownership inside the transaction, and count under the same lock.
+	// The count above is advisory - it ran on another connection, before the
+	// body was even read - so two uploads that both saw 19 files would both
+	// pass it. The row lock serialises them here, which is what makes this
+	// count authoritative and the cap actually a cap.
 	var owned int64
 	err = tx.QueryRow(ctx,
 		`SELECT id FROM models WHERE id = $1 AND user_id = $2 FOR UPDATE`,
@@ -286,6 +285,18 @@ func (s *Service) AddFile(ctx context.Context, userID, modelID int64, parts *mul
 	if err != nil {
 		removeOne(file)
 		return File{}, fmt.Errorf("library: check model: %w", err)
+	}
+
+	// Counted separately rather than folded into the statement above, because
+	// Postgres refuses FOR UPDATE alongside an aggregate.
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*) FROM model_files WHERE model_id = $1`, modelID).Scan(&count); err != nil {
+		removeOne(file)
+		return File{}, fmt.Errorf("library: count files: %w", err)
+	}
+	if count >= s.maxFiles {
+		removeOne(file)
+		return File{}, fmt.Errorf("%w: a model may hold at most %d files", errInvalid, s.maxFiles)
 	}
 
 	out, err := insertFile(ctx, tx, modelID, file)

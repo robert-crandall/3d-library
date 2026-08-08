@@ -3,7 +3,9 @@ package app_test
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/robert-crandall/3d-library/internal/app"
@@ -46,33 +48,46 @@ func TestSpecDescribesTheContract(t *testing.T) {
 	// The codes column pins the refusals the login page has to render. If the
 	// foundation stops declaring one, the generated TypeScript stops describing
 	// it and the UI silently loses a branch.
+	//
+	// The success column exists because the codes column above only asserts
+	// that a response is *present*. An upload that answers 201 while the spec
+	// promises 200 passes every check here without it, and a generated client
+	// believes the spec.
 	for _, tc := range []struct {
 		path, method string
+		success      string
 		codes        []string
 	}{
 		// This app's own routes. Everything below them is the foundation's.
-		{"/api/app", "get", []string{"500"}},
-		{"/api/models", "get", []string{"401"}},
-		{"/api/models", "post", []string{"401", "413", "422"}},
-		{"/api/models/{id}", "get", []string{"401", "404"}},
-		{"/api/auth/register", "post", []string{"403", "409", "422"}},
-		{"/api/auth/login", "post", []string{"401"}},
-		{"/api/auth/logout", "post", nil},
-		{"/api/auth/me", "get", []string{"401"}},
-		{"/api/auth/google/start", "get", nil},
-		{"/api/auth/google/callback", "get", []string{"500"}},
-		{"/api/push/subscribe", "post", nil},
-		{"/api/push/unsubscribe", "post", nil},
-		{"/api/push/test", "post", nil},
-		{"/api/push/vapid-public-key", "get", nil},
-		{"/api/tokens", "get", nil},
-		{"/api/tokens", "post", nil},
-		{"/api/tokens/{id}", "delete", nil},
+		{"/api/app", "get", "200", []string{"500"}},
+		{"/api/models", "get", "200", []string{"401"}},
+		{"/api/models", "post", "201", []string{"401", "413", "422"}},
+		{"/api/models/{id}", "get", "200", []string{"401", "404"}},
+		{"/api/models/{id}/files", "post", "201", []string{"401", "404", "413", "422"}},
+		{"/api/auth/register", "post", "", []string{"403", "409", "422"}},
+		{"/api/auth/login", "post", "", []string{"401"}},
+		{"/api/auth/logout", "post", "", nil},
+		{"/api/auth/me", "get", "", []string{"401"}},
+		{"/api/auth/google/start", "get", "", nil},
+		{"/api/auth/google/callback", "get", "", []string{"500"}},
+		{"/api/push/subscribe", "post", "", nil},
+		{"/api/push/unsubscribe", "post", "", nil},
+		{"/api/push/test", "post", "", nil},
+		{"/api/push/vapid-public-key", "get", "", nil},
+		{"/api/tokens", "get", "", nil},
+		{"/api/tokens", "post", "", nil},
+		{"/api/tokens/{id}", "delete", "", nil},
 	} {
 		op, ok := doc.Paths[tc.path][tc.method]
 		if !ok {
 			t.Errorf("spec is missing %s %s", tc.method, tc.path)
 			continue
+		}
+		if tc.success != "" {
+			if _, ok := op.Responses[tc.success]; !ok {
+				t.Errorf("%s %s does not declare its %s success response; it declares %v",
+					tc.method, tc.path, tc.success, slices.Sorted(maps.Keys(op.Responses)))
+			}
 		}
 		for _, code := range tc.codes {
 			if _, ok := op.Responses[code]; !ok {

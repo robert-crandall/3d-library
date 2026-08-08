@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/robert-crandall/go-home-server/db"
 
@@ -774,4 +775,113 @@ func TestNewServiceRejectsAnUnusableDirectory(t *testing.T) {
 	if _, err := library.NewService(nil, library.Options{Dir: f}); err == nil {
 		t.Error("a plain file was accepted as an upload directory")
 	}
+}
+
+// Two uploads racing for the last slot produce one file, not two.
+//
+// The count that guards the cap once ran outside the transaction, on a separate
+// connection, before the body was read - so two requests that both saw "2 of 3"
+// both passed it and the model ended up with 4 files. A cap that only holds
+// when nobody is in a hurry is not a cap.
+//
+// The race is made deterministic rather than hoped for: this test takes the
+// model's row lock itself and holds it until both requests are demonstrably
+// blocked on it, which is the interleaving that used to break. Sleeping instead
+// would pass on a fast machine whether or not the bug was fixed.
+func TestRacingUploadsCannotExceedMaxFiles(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	dir := t.TempDir()
+	ts := newTestServer(t, pool, library.Options{Dir: dir, MaxFiles: 3})
+	c := signIn(t, ts, "race@example.com")
+
+	resp, body := c.upload("Racy", map[string]string{"a.stl": "solid", "b.stl": "solid"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("seeding the model: got %d, want 201: %s", resp.StatusCode, body)
+	}
+	model := decodeModel(t, body)
+
+	ctx := context.Background()
+	blocker, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer blocker.Rollback(ctx)
+	var locked int64
+	if err := blocker.QueryRow(ctx,
+		"SELECT id FROM models WHERE id = $1 FOR UPDATE", model.ID).Scan(&locked); err != nil {
+		t.Fatalf("lock the model row: %v", err)
+	}
+
+	codes := make(chan int, 2)
+	for i := range 2 {
+		go func() {
+			ct, part := filePart(t, fmt.Sprintf("race%d.stl", i), "solid")
+			resp, _ := c.addFile(model.ID, ct, part)
+			codes <- resp.StatusCode
+		}()
+	}
+
+	// Both requests have to be *waiting on this lock* before it is released.
+	// Releasing early would let them serialise naturally and the test would
+	// prove nothing.
+	waitForBlockedBackends(t, dbURL, 2)
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatalf("release the lock: %v", err)
+	}
+
+	created, refused := 0, 0
+	for range 2 {
+		switch code := <-codes; code {
+		case http.StatusCreated:
+			created++
+		case http.StatusUnprocessableEntity:
+			refused++
+		default:
+			t.Errorf("unexpected status %d", code)
+		}
+	}
+	if created != 1 || refused != 1 {
+		t.Errorf("got %d created and %d refused, want exactly one of each", created, refused)
+	}
+
+	if m := decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", model.ID))); m.FileCount != 3 {
+		t.Errorf("fileCount = %d, want 3 - the cap did not hold under concurrency", m.FileCount)
+	}
+	// The loser's bytes must not be left behind either: it staged a blob before
+	// it ever reached the lock.
+	final, temp := blobs(t, dir)
+	if len(final) != 3 || len(temp) != 0 {
+		t.Errorf("got %d blobs and %d temp files, want 3 and 0", len(final), len(temp))
+	}
+}
+
+// waitForBlockedBackends waits until `want` backends are stuck on a lock. It
+// polls rather than sleeps so the test is not tuned to any particular machine.
+func waitForBlockedBackends(t *testing.T, dbURL string, want int) {
+	t.Helper()
+
+	ctx := context.Background()
+	watcher, err := db.New(ctx, dbURL)
+	if err != nil {
+		t.Fatalf("watcher connect: %v", err)
+	}
+	defer watcher.Close()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var blocked int
+		if err := watcher.QueryRow(ctx,
+			`SELECT count(*) FROM pg_stat_activity
+			  WHERE datname = current_database()
+			    AND wait_event_type = 'Lock'
+			    AND query ILIKE '%FOR UPDATE%'`).Scan(&blocked); err != nil {
+			t.Fatalf("inspect pg_stat_activity: %v", err)
+		}
+		if blocked >= want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("only saw fewer than %d backends blocked on the model row lock", want)
 }

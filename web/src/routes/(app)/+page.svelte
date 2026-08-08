@@ -38,9 +38,12 @@
   // Prepend rather than re-fetch: the list is newest-first and the upload just
   // returned the finished model, so a second round trip would only be a chance
   // for the two to disagree.
-  function uploaded(model: Model) {
+  function uploaded(model: Model, opts?: { keepOpen?: boolean }) {
     models = [model, ...models];
-    uploading = false;
+    // A partial upload keeps the dialog open to say what is missing, but the
+    // model still belongs in the grid immediately: it exists, and a library
+    // that does not show it is lying.
+    if (!opts?.keepOpen) uploading = false;
   }
 </script>
 
