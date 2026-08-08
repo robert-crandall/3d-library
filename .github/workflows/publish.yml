@@ -1,0 +1,240 @@
+name: Publish
+
+# Merging to main publishes the image the homelab runs. Nothing here can be
+# demonstrated from the pull request that adds it: `workflow_run` reads its
+# trigger configuration from the copy of this file on the default branch, so
+# this workflow does not exist, as far as GitHub is concerned, until it is
+# merged. That is why every decision below lives in scripts/ci/publish-plan.sh
+# and is table-tested by internal/cicd - what is left in YAML is plumbing.
+#
+# Why `workflow_run` rather than branch protection plus a `needs:` chain: gating
+# a publish on CI through the UI requires a required-status-check on main, which
+# would also block the direct pushes this repo relies on.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  # Always runs, and never has a job-level `if:`. That is deliberate: a publish
+  # this workflow declines to make should read as `guard: success, build:
+  # skipped` in the Actions UI, not as a run where everything is grey and the
+  # reason is buried in a log.
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+      promote_main: ${{ steps.plan.outputs.promote_main }}
+      ref: ${{ steps.plan.outputs.ref }}
+      image: ${{ steps.plan.outputs.image }}
+      sha_tag: ${{ steps.plan.outputs.sha_tag }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # The one I/O call in the whole decision. It stays here rather than in the
+      # script so the script remains a pure function of its environment and can
+      # be tested without a network.
+      #
+      # GH_TOKEN is set explicitly. A `permissions:` block controls what the
+      # token may do; it does not hand `gh` a token, and `gh` without one fails
+      # with an authentication error rather than anything that reads like a
+      # misconfiguration.
+      - name: Read the current tip of main
+        id: tip
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # `set -e` alone does not catch a failure inside a command
+          # substitution in an `echo` argument - `echo "sha=$(gh api ...)"` on a
+          # failed call writes `sha=` and carries on. The empty tip then never
+          # matches, publish-plan.sh says no, and a merge that should have
+          # published goes green having published nothing. Assign, then assert.
+          #
+          # The default shell for a `run:` block is `bash -e`, not
+          # `bash -eo pipefail`, so pipefail has to be asked for by name too.
+          set -eo pipefail
+          sha=$(gh api "repos/${{ github.repository }}/branches/main" --jq .commit.sha)
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Decide what to publish
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          BRANCH_TIP: ${{ steps.tip.outputs.sha }}
+        run: |
+          # pipefail, or a script that dies mid-way still exits 0 through `tee`
+          # and this step "succeeds" with partial outputs - which reads as a
+          # deliberate skip.
+          set -eo pipefail
+          scripts/ci/publish-plan.sh | tee -a "$GITHUB_OUTPUT"
+
+  # Pushes the immutable tag and nothing else. Splitting the mutable tag out into
+  # `promote` is what closes issue #8's ordering hazard: the guard checks
+  # freshness, then this job runs for minutes, and a check-then-act window that
+  # wide will eventually lose a race. An immutable per-commit tag cannot lose one
+  # - two concurrent merges write two different tags.
+  build:
+    needs: guard
+    if: needs.guard.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # Check out the commit the guard validated, not github.sha. Under
+      # `workflow_run` those differ: github.sha is the default branch's tip at
+      # dispatch time, not the commit CI actually tested.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.guard.outputs.ref }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4.5.2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          # One tag, and it is the immutable one. :main moves in `promote`.
+          tags: ${{ needs.guard.outputs.image }}:${{ needs.guard.outputs.version || needs.guard.outputs.sha_tag }}
+          # CI's docker-build job just populated this cache on the same ref, so
+          # this build is warm. That is also why docker-build stays in CI even
+          # though it publishes nothing.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.guard.outputs.ref }}
+            org.opencontainers.image.version=${{ needs.guard.outputs.version || needs.guard.outputs.sha_tag }}
+
+  # Moves :main, then tells the homelab. Skipped entirely on the version-tag
+  # path: :v1.2.3 is already immutable and :main did not move, so there is
+  # nothing new for anyone to pull.
+  promote:
+    needs: [guard, build]
+    if: needs.guard.outputs.promote_main == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    # Serializes the only mutable write in the pipeline. This is not the
+    # "concurrency instead of a guard" idea D9 rejects - it is narrower, and it
+    # buys something specific:
+    #
+    #   It guarantees: promote jobs never overlap, and :main is never rolled
+    #   backwards - a promote that runs after a newer one has already moved the
+    #   tag re-reads the newer tip and declines. That is the failure the issue
+    #   names, gone.
+    #
+    #   It does not guarantee: that the re-read and the tag move are atomic. A
+    #   newer commit can land in between, in which case :main goes to the older
+    #   image and then the newer promote moves it forward. Transient and
+    #   self-correcting - it is a lag, not a rollback.
+    #
+    #   Nor does it guarantee: that :main ends up on the newest commit that
+    #   published. GitHub keeps one pending entry per group, so with A running,
+    #   B pending and C queued, B is cancelled - and if C then declines or
+    #   fails, :main stays at A even though B's immutable tag exists. :main is
+    #   always *a* commit that published successfully, but it is not a maximum.
+    #   Correctness survives because a cancelled job cannot write. D9 has the
+    #   same three points.
+    #
+    # cancel-in-progress is false on purpose: cancelling a promote mid-write is
+    # exactly the thing this group exists to prevent.
+    concurrency:
+      group: publish-promote-main
+      cancel-in-progress: false
+    steps:
+      # No `docker/setup-buildx-action` here, deliberately: `imagetools create`
+      # is a registry-side manifest copy and needs only the buildx CLI plugin
+      # the runner image already ships, not a builder instance. D9 carries the
+      # probe that measured it.
+      #
+      # Jobs get their own runners, so the login in `build` does not carry over.
+      # This is the sort of omission that only ever fails once it is on main.
+      - uses: docker/login-action@v4.5.2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # Re-read the tip now that the build is done. The guard's answer is
+      # minutes stale by this point.
+      - name: Move :main to the freshly published image
+        id: promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.guard.outputs.image }}
+          SHA_TAG: ${{ needs.guard.outputs.sha_tag }}
+          EXPECTED: ${{ needs.guard.outputs.ref }}
+        run: |
+          set -eo pipefail
+          tip=$(gh api "repos/${{ github.repository }}/branches/main" --jq .commit.sha)
+          test -n "$tip"
+          if [ "$tip" != "$EXPECTED" ]; then
+            # Both destinations get the whole message. The step summary is what
+            # a maintainer actually reads in the UI, and half a sentence there
+            # ("...will move it") has no antecedent without the first half.
+            msg="main moved to $tip while $EXPECTED was building; leaving :main alone. The newer commit's own publish run will move it."
+            echo "$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # A registry-side manifest copy of an image that already exists: no
+          # rebuild, no local daemon.
+          docker buildx imagetools create -t "$IMAGE:main" "$IMAGE:$SHA_TAG"
+          echo "promoted=true" >> "$GITHUB_OUTPUT"
+
+      # D9 puts this in a third workflow that asks the API whether the publish
+      # job really pushed, because a guarded-out publish leaves the wrapper
+      # workflow green. That is a real hazard, but the job that just pushed
+      # already knows the answer firsthand - so asking from here removes a
+      # cross-workflow API call, an `actions: read` grant, and a coupling to
+      # this job's display name that would silently disable deployment if
+      # anyone renamed it.
+      #
+      # continue-on-error: an unreachable homelab must not turn a good publish
+      # red. Watchtower's own polling interval is the backstop.
+      - name: Tell Watchtower there is a new image
+        if: steps.promote.outputs.promoted == 'true'
+        continue-on-error: true
+        env:
+          WATCHTOWER_WEBHOOK_URL: ${{ secrets.WATCHTOWER_WEBHOOK_URL }}
+          WATCHTOWER_TOKEN: ${{ secrets.WATCHTOWER_TOKEN }}
+        run: |
+          # Criterion 5: a fork of this template with no secrets set must still
+          # go green. Checked in-shell rather than with a step-level `if:` so
+          # the skip is visible in the log instead of being a grey step.
+          if [ -z "$WATCHTOWER_WEBHOOK_URL" ]; then
+            echo "WATCHTOWER_WEBHOOK_URL is unset - nothing to notify. Published image stands."
+            exit 0
+          fi
+          # An array, because `${VAR:+-H "a: b"}` word-splits on the space and
+          # curl would receive four arguments with literal quotes in them.
+          auth=()
+          if [ -n "$WATCHTOWER_TOKEN" ]; then
+            auth=(-H "Authorization: Bearer $WATCHTOWER_TOKEN")
+          fi
+          curl -fsS -X POST --max-time 5 "${auth[@]}" "$WATCHTOWER_WEBHOOK_URL"

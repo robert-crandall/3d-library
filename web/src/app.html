@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="%sveltekit.assets%/favicon.svg" />
+    <link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
+    <!-- iOS ignores the manifest's icons when you add to home screen. -->
+    <link rel="apple-touch-icon" href="%sveltekit.assets%/icon-192.png" />
+    <title>3D Library</title>
+    <!--
+      Apply the saved theme before the first paint. This is inline and in the
+      head on purpose: anything that runs after hydration paints the light
+      theme first, so a dark-theme user gets a white flash on every load. It is
+      the one piece of logic that cannot live in a component.
+
+      Wrapped in try/catch because localStorage throws outright in a browser
+      with site data blocked, and an exception here would leave the page
+      unstyled rather than merely light.
+    -->
+    <script>
+      try {
+        var saved = localStorage.getItem('theme');
+        var dark = saved
+          ? saved === 'dark'
+          : matchMedia('(prefers-color-scheme: dark)').matches;
+        if (dark) document.documentElement.classList.add('dark');
+      } catch (e) {}
+    </script>
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

@@ -1,0 +1,369 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MAX_FILE_BYTES, uploadModel } from './upload';
+
+function ok(body: unknown) {
+  return { ok: true, status: 201, json: async () => body } as Response;
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('uploadModel', () => {
+  it('creates the model with the first file and adds the rest', async () => {
+    const calls: Array<{ url: string; name: string }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const body = init?.body as FormData | undefined;
+        const file = body?.get('file') as File | undefined;
+        calls.push({ url, name: file?.name ?? '' });
+
+        // No init means the trailing GET that re-reads the finished model.
+        if (!init) return ok({ id: 7, name: 'Benchy', fileCount: 3, totalSize: 30 });
+        if (url.startsWith('/api/models?')) return ok({ id: 7, name: 'Benchy', fileCount: 1 });
+        return ok({ id: 99 });
+      })
+    );
+
+    const states: string[] = [];
+    const { model, failed } = await uploadModel(
+      'Benchy',
+      [file('a.stl'), file('b.stl'), file('c.stl')],
+      (index, state) => states.push(`${index}:${state}`)
+    );
+
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/models?name=Benchy',
+      '/api/models/7/files',
+      '/api/models/7/files',
+      '/api/models/7'
+    ]);
+    expect(calls.slice(0, 3).map((c) => c.name)).toEqual(['a.stl', 'b.stl', 'c.stl']);
+    expect(states).toEqual([
+      '0:uploading',
+      '0:done',
+      '1:uploading',
+      '1:done',
+      '2:uploading',
+      '2:done'
+    ]);
+    // The re-read is what gives the grid the real counts; the create response
+    // only ever knows about its own file.
+    expect(model.fileCount).toBe(3);
+    expect(failed).toEqual([]);
+  });
+
+  it('encodes the name so a slash or an ampersand cannot break the URL', async () => {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        seen.push(url);
+        return ok({ id: 1, name: 'x' });
+      })
+    );
+
+    await uploadModel('Gears & bolts/v2', [file('a.stl')], () => {});
+
+    expect(seen[0]).toBe('/api/models?name=Gears%20%26%20bolts%2Fv2');
+  });
+
+  // The failure that matters most: the model already exists by then. Throwing
+  // it away would leave a row the user can neither see nor delete, and pressing
+  // Upload again would make a second copy of it.
+  it('returns the model when a later file fails, and keeps going', async () => {
+    let call = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        if (!init) return ok({ id: 3, name: 'Half', fileCount: 2 });
+        call += 1;
+        if (call === 1) return ok({ id: 3, name: 'Half', fileCount: 1 });
+        if (call === 2) {
+          return {
+            ok: false,
+            status: 422,
+            json: async () => ({ detail: 'library: invalid upload: bad name' })
+          } as Response;
+        }
+        return ok({ id: 99 });
+      })
+    );
+
+    const states: Array<[number, string, string | undefined]> = [];
+    const { model, failed } = await uploadModel(
+      'Half',
+      [file('a.stl'), file('b.stl'), file('c.stl')],
+      (i, s, e) => states.push([i, s, e])
+    );
+
+    expect(model.id).toBe(3);
+    expect(failed).toEqual(['b.stl']);
+    // One bad file says nothing about the next one, and this milestone has no
+    // way to add it later, so c.stl still gets its turn.
+    expect(states).toContainEqual([2, 'done', undefined]);
+    expect(states).toContainEqual([1, 'failed', 'library: invalid upload: bad name']);
+  });
+
+  // The mirror image: nothing was created, so there is nothing to report and
+  // retrying is the right thing for the caller to offer.
+  it('throws when the very first file fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 422,
+        json: async () => ({ detail: 'library: invalid upload: bad name' })
+      }) as Response)
+    );
+
+    await expect(uploadModel('Nope', [file('a.stl'), file('b.stl')], () => {})).rejects.toThrow(
+      'library: invalid upload: bad name'
+    );
+  });
+
+  it('translates a 413 into something about the size limit', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 413, json: async () => ({}) }) as Response)
+    );
+
+    await expect(uploadModel('Huge', [file('a.stl')], () => {})).rejects.toThrow(
+      'over the 500 MB limit'
+    );
+  });
+
+  it('survives a body that is not a problem document', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: false,
+            status: 502,
+            json: async () => {
+              throw new Error('not json');
+            }
+          }) as unknown as Response
+      )
+    );
+
+    await expect(uploadModel('Gateway', [file('a.stl')], () => {})).rejects.toThrow(
+      'Upload failed (502).'
+    );
+  });
+
+  it('reports an unreachable server rather than throwing a fetch error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      })
+    );
+
+    await expect(uploadModel('Offline', [file('a.stl')], () => {})).rejects.toThrow(
+      'Could not reach the server.'
+    );
+  });
+
+  // Whether a retry is safe is the whole question, so it is carried on the
+  // error rather than left for the caller to guess at from a message.
+  it('marks a refusal from the server as certain and a lost connection as not', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({ ok: false, status: 422, json: async () => ({ detail: 'nope' }) }) as unknown as Response
+      )
+    );
+    await expect(uploadModel('Refused', [file('a.stl')], () => {})).rejects.toMatchObject({
+      certain: true
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () => ({ ok: false, status: 500, json: async () => ({}) }) as unknown as Response
+      )
+    );
+    await expect(uploadModel('Broke', [file('a.stl')], () => {})).rejects.toMatchObject({
+      certain: false
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      })
+    );
+    await expect(uploadModel('Offline', [file('a.stl')], () => {})).rejects.toMatchObject({
+      certain: false
+    });
+  });
+
+  // A lost response is not a lost file. The re-read at the end is the arbiter:
+  // if the server has every file, telling the user one is missing - and
+  // sending them off to add it a second time - is simply wrong.
+  it('trusts the re-read over a lost response', async () => {
+    let call = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith('/api/models/9')) {
+          return { ok: true, json: async () => ({ id: 9, name: 'Both', fileCount: 2 }) } as never;
+        }
+        call += 1;
+        if (call === 1) {
+          return { ok: true, json: async () => ({ id: 9, name: 'Both', fileCount: 1 }) } as never;
+        }
+        throw new TypeError('Failed to fetch');
+      })
+    );
+
+    const { model, failed } = await uploadModel('Both', [file('a.stl'), file('b.stl')], () => {});
+    expect(model.fileCount).toBe(2);
+    expect(failed).toEqual([]);
+  });
+
+  // The create response predates every file after the first, so if the re-read
+  // fails the count in hand is a lie. Reporting a two-file model as having one
+  // file is how the user concludes files went missing and uploads it again.
+  it('does not report a stale file count when the re-read fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!init) throw new TypeError('Failed to fetch');
+        if (String(url).startsWith('/api/models?')) {
+          return { ok: true, json: async () => ({ id: 9, name: 'Both', fileCount: 1 }) } as never;
+        }
+        return { ok: true, json: async () => ({ id: 40 }) } as never;
+      })
+    );
+
+    await expect(
+      uploadModel('Both', [file('a.stl'), file('b.stl')], () => {})
+    ).rejects.toMatchObject({ certain: false });
+  });
+
+  // The other half of the same rule: when nothing followed the first file, the
+  // create response is complete, and a failed re-read costs nothing. Failing
+  // here would turn every flaky GET into a scary dead end for no reason.
+  it('keeps the create response when a single-file re-read fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!init) return { ok: false, status: 503 } as never;
+        return { ok: true, json: async () => ({ id: 9, name: 'Solo', fileCount: 1 }) } as never;
+      })
+    );
+
+    const { model, failed } = await uploadModel('Solo', [file('a.stl')], () => {});
+    expect(model.fileCount).toBe(1);
+    expect(failed).toEqual([]);
+  });
+
+  // The count derived locally is a lower bound, not the truth: a file whose
+  // request failed uncertainly may have landed anyway. Here that lower bound
+  // coincidentally equals the stale create count, so a comparison alone would
+  // wave it through and claim a two-file model has one file.
+  it('does not trust a count that only matches because a file failed uncertainly', async () => {
+    let posts = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!init) throw new TypeError('Failed to fetch');
+        posts += 1;
+        if (posts === 1) {
+          return { ok: true, json: async () => ({ id: 9, name: 'Both', fileCount: 1 }) } as never;
+        }
+        throw new TypeError('Failed to fetch');
+      })
+    );
+
+    await expect(
+      uploadModel('Both', [file('a.stl'), file('b.stl')], () => {})
+    ).rejects.toMatchObject({ certain: false });
+  });
+
+  // The other side: a 4xx is decided before anything is written, so that file
+  // really is absent and the stale count really is right. Treating every failure
+  // as unconfirmed would turn an ordinary rejected file into a dead end.
+  it('keeps the create response when the only later failure was a refusal', async () => {
+    let posts = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!init) return { ok: false, status: 503 } as never;
+        posts += 1;
+        if (posts === 1) {
+          return { ok: true, json: async () => ({ id: 9, name: 'Both', fileCount: 1 }) } as never;
+        }
+        return {
+          ok: false,
+          status: 415,
+          json: async () => ({ detail: 'that is not a model file' })
+        } as never;
+      })
+    );
+
+    const { model, failed } = await uploadModel(
+      'Both',
+      [file('a.stl'), file('b.stl')],
+      () => {}
+    );
+    expect(model.fileCount).toBe(1);
+    expect(failed).toEqual(['b.stl']);
+  });
+
+  // A 5xx on a later file is the other way a file can be unconfirmed: the
+  // server may well have written it and then failed on the way out.
+  it('does not trust the count when a later file got a 5xx', async () => {
+    let posts = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!init) throw new TypeError('Failed to fetch');
+        posts += 1;
+        if (posts === 1) {
+          return { ok: true, json: async () => ({ id: 9, name: 'Both', fileCount: 1 }) } as never;
+        }
+        return { ok: false, status: 500, json: async () => ({ detail: 'boom' }) } as never;
+      })
+    );
+
+    await expect(
+      uploadModel('Both', [file('a.stl'), file('b.stl')], () => {})
+    ).rejects.toMatchObject({ certain: false });
+  });
+
+  // A 201 whose body never arrives is the nastiest case in the whole flow: the
+  // model exists, but we do not know its id, so it cannot be shown and cannot
+  // be reported as created. What it must not be is retryable.
+  it('does not call a created model retryable when its reply was lost', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 201,
+        json: async () => {
+          throw new SyntaxError('Unexpected end of JSON input');
+        }
+      }) as unknown as Response)
+    );
+
+    await expect(uploadModel('Lost', [file('a.stl')], () => {})).rejects.toMatchObject({
+      certain: false
+    });
+  });
+
+  it('refuses an empty selection', async () => {
+    await expect(uploadModel('Nothing', [], () => {})).rejects.toThrow('at least one file');
+  });
+
+  it('agrees with the server about the size cap', () => {
+    expect(MAX_FILE_BYTES).toBe(500 * 1024 * 1024);
+  });
+});
+
+function file(name: string): File {
+  return new File(['solid'], name);
+}

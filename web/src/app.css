@@ -1,0 +1,52 @@
+/* Tailwind plus this app's palette, and deliberately nothing else.
+
+   The template ships Tailwind bare and says a fork picks its own palette (D5 in
+   docs/tech-stack.md). This is that pick, taken from `docs/designs/3D
+   Library.dc.html` screens 1a (light) and 1d (dark).
+
+   Tailwind's preflight is on, as it is by default, so form controls start with
+   no border and a transparent background; components carry the handful of
+   structural classes that makes them usable.
+
+   Dark mode is a class on <html>, not a media query, because the design has a
+   toggle and a media query cannot be overridden by one. Both themes define the
+   same variable names, so a component names a colour once and neither theme
+   appears in markup. */
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-page: #f7f8f9;
+  --color-surface: #ffffff;
+  --color-sidebar: #f0f2f4;
+  --color-ink: #14171a;
+  --color-muted: #6b7280;
+  --color-faint: #8b929c;
+  --color-line: #e2e5e9;
+  --color-line-strong: #d7dbe0;
+  --color-accent: #2f62d8;
+  --color-accent-ink: #ffffff;
+  --color-danger: #b42318;
+
+  --radius-tile: 7px;
+}
+
+.dark {
+  --color-page: #16181b;
+  --color-surface: #1b1e22;
+  --color-sidebar: #131518;
+  --color-ink: #e6e8ea;
+  --color-muted: #7b828a;
+  --color-faint: #6a7078;
+  --color-line: #2b2f34;
+  --color-line-strong: #333940;
+  --color-accent: #6f9bff;
+  --color-accent-ink: #10131a;
+  --color-danger: #f97066;
+}
+
+html {
+  background-color: var(--color-page);
+  color: var(--color-ink);
+}

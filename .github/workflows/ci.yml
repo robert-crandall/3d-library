@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # The frontend builds first and hands web/build to the Go job as an artifact.
+  # That ordering isn't a preference: web/dist.go does `//go:embed all:build`,
+  # so `go build` fails outright until web/build exists.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.x'
+      # ubuntu-latest ships Node. Without web/bunfig.toml, `bun run` would honor
+      # vite's `#!/usr/bin/env node` shebang and build under Node - and every
+      # other step here would still pass, so the Bun path this template promises
+      # would go untested. A missing, misplaced, or typo'd bunfig is silent:
+      # Bun reports no error, it just falls back to Node. Assert the shim that
+      # shebang resolves through is actually Bun, before anything else runs.
+      #
+      # The `command -v node` line is part of the evidence, not decoration: Bun
+      # aliases `node` to itself automatically when Node is absent, so on a
+      # Node-free host this assertion would pass no matter what bunfig says.
+      # Printing where Node is shows the check had something to prove.
+      - name: Assert bunfig.toml forces the Bun runtime
+        working-directory: web
+        run: |
+          echo "node on PATH: $(command -v node || echo '(none - assertion is weaker here)')"
+          runtime=$(bun run --silent node -p "typeof Bun === 'undefined' ? 'NODE' : 'BUN'")
+          echo "bun run resolves node -> $runtime"
+          [ "$runtime" = BUN ] || { echo "::error file=web/bunfig.toml::bun run built under $runtime, not Bun - web/bunfig.toml is not in force"; exit 1; }
+      - run: bun install --frozen-lockfile
+        working-directory: web
+      - run: bun run check
+        working-directory: web
+      - run: bun run test
+        working-directory: web
+      - run: bun run build
+        working-directory: web
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-build
+          path: web/build
+
+  go:
+    runs-on: ubuntu-latest
+    needs: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+          cache-dependency-path: go.sum
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-build
+          path: web/build
+      # The embed matches web/build/index.html and nothing else, so a
+      # round-trip that nests the artifact one level deeper compiles into a
+      # binary that 404s every asset. Fail here instead.
+      - name: Check the artifact landed at web/build/index.html
+        run: test -f web/build/index.html
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  # The contract is committed, so it has to be regenerable. This job runs the
+  # generator and fails if anything moved - which is the whole reason
+  # cmd/openapi exists as a separate entry point.
+  #
+  # Deliberately no DATABASE_URL and no `needs: web`: this job proves the
+  # generator needs neither Postgres nor a frontend build. If someone wires a
+  # query into RegisterRoutes, it panics here on a nil pool.
+  spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+          cache-dependency-path: go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.x'
+      # A fresh runner has no web/node_modules, so `bun run gen:api` would have
+      # nothing to run.
+      - run: bun install --frozen-lockfile
+        working-directory: web
+      - run: make spec
+      - name: Check the committed contract is up to date
+        run: |
+          git diff --exit-code -- docs/openapi.json web/src/lib/api/schema.d.ts \
+            || { echo "::error::the API contract changed - run \`make spec\` and commit docs/openapi.json + web/src/lib/api/schema.d.ts"; exit 1; }
+
+  # The integration job runs the database-backed Go tests against a real
+  # Postgres. The web job already checks and builds the frontend separately.
+  integration:
+    runs-on: ubuntu-latest
+    needs: web
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: 3d-library_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+          cache-dependency-path: go.sum
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-build
+          path: web/build
+      - name: Run database-backed integration tests
+        run: go test ./... -v
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/3d-library_test?sslmode=disable
+  # The image the homelab pulls. linux/amd64 only - that is what the homelab
+  # runs. Kept explicit rather than left to default to the runner's own
+  # architecture, so what gets built here doesn't quietly follow a runner label
+  # and drift from what publish.yml ships. No `needs`: the Dockerfile builds the
+  # SPA in its own stage, because the image has to be reproducible from a clean
+  # checkout by someone who never ran the `web` job.
+  #
+  # setup-buildx is here for the cache, not for the build. The runner's default
+  # builder uses the `docker` driver, which cannot export cache at all - dropping
+  # this step fails the job outright with "Cache export is not supported for the
+  # docker driver" (measured on ubuntu-latest, Docker 28.0.4, buildx v0.35.0).
+  #
+  # Cache only, no output. Publishing is .github/workflows/publish.yml, which
+  # fires when this workflow completes - and reuses the gha cache this job just
+  # populated, so the publish build is warm. That's the reason this job stays
+  # here even though it produces nothing.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,71 @@
+# Dependency updates arrive on their own and, if CI passes, merge themselves -
+# see .github/workflows/dependabot-auto-merge.yml. Four ecosystems, because
+# this repo's dependencies live in four places that nothing else keeps in sync.
+#
+# Minor and patch updates are grouped into one pull request per ecosystem: they
+# are individually boring and collectively noisy, and one green CI run says as
+# much about ten of them as ten runs do. Majors deliberately fall out of the
+# group and arrive standalone, so the one that breaks something is legible on
+# its own rather than buried in a batch.
+#
+# Note that majors auto-merge too. D9 spells out what that assumes - chiefly
+# that you keep external, tested Postgres backups, because rolling back the
+# image tag does not roll back a migration the new image already ran.
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-minor-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  # web/, not /. Bun's lockfile lives with the frontend.
+  - package-ecosystem: bun
+    directory: /web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      bun-minor-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+    # The one exception to "majors auto-merge". TypeScript 7 is the native
+    # rewrite and drops the JS compiler API that the frontend toolchain still
+    # calls into: svelte-check 4.7.4 refuses to start under it, and
+    # openapi-typescript 7.13.0 crashes on `ts.factory` being undefined, which
+    # takes out `make spec`. Both are already at their latest release, so
+    # nothing here can be bumped to make TS7 work - the bound holds at the last
+    # TypeScript with the classic API. It covers 8 and later too, on the
+    # assumption those stay native. 6.x minors still flow through the group.
+    # Delete this once both tools ship native-compiler support.
+    ignore:
+      - dependency-name: typescript
+        versions: ['>=7.0.0']
+
+  # Keeps the `uses:` pins in .github/workflows current, including the ones in
+  # publish.yml that push the image.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  # The base images in the Dockerfile.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      docker-minor-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
