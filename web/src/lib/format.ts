@@ -29,3 +29,22 @@ export function formatBytes(bytes: number): string {
 export function formatFileCount(count: number): string {
   return `${count} ${count === 1 ? 'file' : 'files'}`;
 }
+
+/**
+ * "12 Mar 2026". Day-month-year with a short month name, because it is
+ * unambiguous everywhere - 03/12/2026 is two different days depending on who is
+ * reading it, and the library has exactly one date on screen at a time so the
+ * extra three characters cost nothing.
+ *
+ * The API sends RFC 3339, so Date parses it. An unparseable value renders as a
+ * dash rather than "Invalid Date".
+ */
+export function formatDate(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '—';
+  return new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  }).format(at);
+}

@@ -118,8 +118,8 @@
       uploading = false;
       // The dialog could not tell whether the upload landed. Re-reading the
       // library is what settles it, and it has to happen before Upload is
-      // available again or the user can make the second copy this milestone
-      // cannot delete.
+      // available again or the user can make a second copy they then have to
+      // find and delete by hand.
       if (opts?.reload) load();
     }}
     onuploaded={uploaded}

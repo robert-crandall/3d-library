@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes, formatFileCount } from './format';
+import { formatBytes, formatDate, formatFileCount } from './format';
 
 describe('formatBytes', () => {
   it('leaves bytes alone below a kilobyte', () => {
@@ -38,5 +38,18 @@ describe('formatFileCount', () => {
     expect(formatFileCount(0)).toBe('0 files');
     expect(formatFileCount(1)).toBe('1 file');
     expect(formatFileCount(2)).toBe('2 files');
+  });
+});
+
+describe('formatDate', () => {
+  it('renders a timestamp as a day', () => {
+    expect(formatDate('2026-03-12T09:00:00Z')).toBe('12 Mar 2026');
+  });
+
+  // Same reason as formatBytes: the value comes off the wire, and "Invalid
+  // Date" in the middle of a metadata row is worse than an em dash.
+  it('refuses to render nonsense', () => {
+    expect(formatDate('')).toBe('—');
+    expect(formatDate('not a date')).toBe('—');
   });
 });

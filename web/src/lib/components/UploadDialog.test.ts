@@ -5,12 +5,13 @@ import { MAX_FILE_BYTES } from '$lib/upload';
 
 vi.mock('$lib/upload', async () => {
   const actual = await vi.importActual<typeof import('$lib/upload')>('$lib/upload');
-  return { ...actual, uploadModel: vi.fn() };
+  return { ...actual, uploadModel: vi.fn(), addFiles: vi.fn() };
 });
 
-import { UploadFailed, uploadModel } from '$lib/upload';
+import { UploadFailed, addFiles, uploadModel } from '$lib/upload';
 
 const mocked = vi.mocked(uploadModel);
+const mockedAdd = vi.mocked(addFiles);
 
 // The file input is populated directly rather than through a click: jsdom has
 // no file picker, and `files` is the only thing `pick` reads.
@@ -35,7 +36,13 @@ describe('UploadDialog', () => {
 
     const dialog = screen.getByRole('dialog');
     expect(dialog.getAttribute('aria-modal')).toBe('true');
-    expect(dialog.getAttribute('aria-labelledby')).toBe('upload-title');
+    // Resolve the reference rather than compare the id. The id is generated, so
+    // comparing it would only restate the implementation - and it would still
+    // pass if aria-labelledby pointed at an element that does not exist, which
+    // is the failure this test is actually for.
+    const label = dialog.getAttribute('aria-labelledby');
+    expect(label).toBeTruthy();
+    expect(document.getElementById(label!)?.textContent).toBe('Upload a model');
   });
 
   // aria-modal is a promise that the rest of the page is unreachable. These
@@ -140,7 +147,12 @@ describe('UploadDialog', () => {
     // keepOpen, so the dialog can say what is missing rather than vanishing.
     expect(onuploaded.mock.calls[0][1]).toEqual({ keepOpen: true });
 
-    expect((await screen.findByRole('alert')).textContent).toContain('b.stl');
+    // "Could not confirm", not "did not upload": b.stl's response may have been
+    // lost after the write landed, and telling the user it failed is what makes
+    // them add a second copy.
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('b.stl');
+    expect(alert.textContent).not.toContain('did not upload');
     expect(screen.queryByRole('button', { name: 'Upload' })).toBeNull();
     // Plain Done: the model is already in the grid and nothing is in doubt.
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeNull();
@@ -240,5 +252,106 @@ describe('UploadDialog', () => {
     expect((screen.getByRole('button', { name: 'Upload' }) as HTMLButtonElement).disabled).toBe(
       true
     );
+  });
+});
+
+// The second mode of the same dialog. It exists because the two flows share the
+// picker, the size and count checks, the progress list and the failure
+// rendering; these tests are the differences.
+describe('UploadDialog in add-files mode', () => {
+  const model = { id: 7, fileCount: 8 };
+
+  it('drops the name field and says how much room is left', () => {
+    render(UploadDialog, { model, onclose: vi.fn() });
+
+    expect(screen.getByRole('heading', { name: 'Add files' })).toBeTruthy();
+    expect(screen.queryByLabelText('Name')).toBeNull();
+    expect(screen.getByText(/Room for 12 more/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add' })).toBeTruthy();
+  });
+
+  // The limit is per model, not per upload, so what is already there counts.
+  it('refuses a selection that would take the model over the limit', async () => {
+    render(UploadDialog, { model: { id: 7, fileCount: 19 }, onclose: vi.fn() });
+
+    const input = screen.getByLabelText('Files') as HTMLInputElement;
+    Object.defineProperty(input, 'files', {
+      value: [new File(['a'], 'a.stl'), new File(['b'], 'b.stl')],
+      configurable: true
+    });
+    await fireEvent.change(input);
+
+    expect((await screen.findByRole('alert')).textContent).toContain('room for 1 more file');
+    expect(mockedAdd).not.toHaveBeenCalled();
+  });
+
+  it('closes and asks for a reload once every file lands', async () => {
+    mockedAdd.mockResolvedValue({ failed: [] });
+    const onclose = vi.fn();
+    render(UploadDialog, { model, onclose });
+
+    await pickAFile();
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+    await waitFor(() => expect(onclose).toHaveBeenCalledWith({ reload: true }));
+    expect(mockedAdd.mock.calls[0][0]).toBe(7);
+  });
+
+  // The bug this replaced: with A uploaded and B failed, the dialog kept an
+  // enabled Add button over a queue that still held A, so pressing it again
+  // uploaded a second copy of A. A partial add is terminal for that reason -
+  // the only way on is to close, re-read, and pick what is actually missing.
+  it('goes terminal after a partial add rather than offering to re-send', async () => {
+    mockedAdd.mockImplementation(async (_id, files, onState) => {
+      onState(0, 'done');
+      onState(1, 'failed', 'boom');
+      return { failed: [files[1].name] };
+    });
+    const onclose = vi.fn();
+    const sent = mockedAdd.mock.calls.length;
+    render(UploadDialog, { model, onclose });
+
+    const input = screen.getByLabelText('Files') as HTMLInputElement;
+    Object.defineProperty(input, 'files', {
+      value: [new File(['a'], 'a.stl'), new File(['b'], 'b.stl')],
+      configurable: true
+    });
+    await fireEvent.change(input);
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+    // "Could not confirm", not "did not upload": b.stl's response may have been
+    // lost after the write landed, and telling the user it failed is what makes
+    // them add a second copy.
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('b.stl');
+    expect(alert.textContent).not.toContain('did not upload');
+    expect(screen.queryByRole('button', { name: 'Add' })).toBeNull();
+    expect(onclose).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    // Reload, always: a.stl landed, and the count on the model page is the one
+    // thing this flow must not leave stale.
+    expect(onclose).toHaveBeenCalledWith({ reload: true });
+    expect(mockedAdd.mock.calls.length).toBe(sent + 1);
+  });
+
+  // Cancel really is "nothing happened", in add mode too: it is disabled while
+  // an upload is in flight, and a partial add replaces it with Done. So the
+  // only way to reach it is a queue nobody sent, and reloading anyway would be
+  // a request for a state that cannot have changed.
+  it('does not ask for a reload when an add is cancelled before sending', async () => {
+    const onclose = vi.fn();
+    render(UploadDialog, { model, onclose });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onclose).toHaveBeenCalledWith({ reload: false });
+  });
+
+  it('does not ask the library to reload when a create is cancelled', async () => {
+    const onclose = vi.fn();
+    render(UploadDialog, { onclose, onuploaded: vi.fn() });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onclose).toHaveBeenCalledWith({ reload: false });
   });
 });

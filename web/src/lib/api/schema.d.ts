@@ -163,9 +163,17 @@ export interface paths {
          * @description One model and the files it owns.
          */
         get: operations["get-model"];
-        put?: never;
+        /**
+         * Update a model's metadata
+         * @description Replaces the model's editable metadata. All four fields are sent every time; an empty string clears a field. The name may not be blank.
+         */
+        put: operations["update-model"];
         post?: never;
-        delete?: never;
+        /**
+         * Delete a model
+         * @description Removes the model, every file it owns, and their stored blobs. There is no undo.
+         */
+        delete: operations["delete-model"];
         options?: never;
         head?: never;
         patch?: never;
@@ -186,6 +194,30 @@ export interface paths {
          */
         post: operations["add-model-file"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/models/{id}/files/{fileId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a file's contents
+         * @description The file's raw bytes, always as an attachment.
+         */
+        get: operations["download-model-file"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a file from a model
+         * @description Removes one file and its stored blob. The model stays, even if that was its last file.
+         */
+        delete: operations["delete-model-file"];
         options?: never;
         head?: never;
         patch?: never;
@@ -439,20 +471,34 @@ export interface components {
             type: string;
         };
         Model: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/Model.json
-             */
-            readonly $schema?: string;
             /** Format: date-time */
             createdAt: string;
             /** Format: int64 */
             fileCount: number;
-            files?: components["schemas"]["File"][] | null;
             /** Format: int64 */
             id: number;
             name: string;
+            /** Format: int64 */
+            totalSize: number;
+        };
+        ModelDetail: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ModelDetail.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            createdAt: string;
+            description: string;
+            /** Format: int64 */
+            fileCount: number;
+            files: components["schemas"]["File"][];
+            /** Format: int64 */
+            id: number;
+            name: string;
+            printTips: string;
+            sourceUrl: string;
             /** Format: int64 */
             totalSize: number;
         };
@@ -515,6 +561,22 @@ export interface components {
         SubscriptionKeysStruct: {
             auth: string;
             p256dh: string;
+        };
+        UpdateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/UpdateInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Free text, may be empty */
+            description: string;
+            /** @description The model's display name */
+            name: string;
+            /** @description One tip per line, may be empty */
+            printTips: string;
+            /** @description An http:// or https:// address, or empty */
+            sourceUrl: string;
         };
         User: {
             /**
@@ -906,7 +968,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Model"][] | null;
+                    "application/json": components["schemas"]["Model"][];
                 };
             };
             /** @description Unauthorized */
@@ -952,7 +1014,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Model"];
+                    "application/json": components["schemas"]["ModelDetail"];
                 };
             };
             /** @description Unauthorized */
@@ -1010,8 +1072,126 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Model"];
+                    "application/json": components["schemas"]["ModelDetail"];
                 };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "update-model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelDetail"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Unauthorized */
             401: {
@@ -1096,6 +1276,122 @@ export interface operations {
             };
             /** @description Request Entity Too Large */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "download-model-file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+                fileId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file's raw bytes. The response Content-Type is the type detected at upload, not necessarily application/octet-stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-model-file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+                fileId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -14,10 +14,14 @@
   uniform placeholder is honest about that, where showing the first image file
   for some models and nothing for others would read as broken.
 
-  Not a link yet. The model detail screen is milestone 2, and a link to a route
-  that does not exist is worse than a tile that does not move.
+  The whole tile is the link, not just the name: the thumbnail is the biggest
+  thing on it and the obvious thing to click, and a 42px-tall target beats a
+  one-line one on a phone.
 -->
-<article class="overflow-hidden rounded-tile border border-line bg-surface">
+<a
+  class="block overflow-hidden rounded-tile border border-line bg-surface"
+  href="/models/{model.id}"
+>
   <div
     class="h-42 border-b border-line"
     style="background-image: repeating-linear-gradient(45deg, var(--color-line) 0 1px, transparent 1px 9px)"
@@ -29,4 +33,4 @@
       {formatFileCount(model.fileCount)} · {formatBytes(model.totalSize)}
     </p>
   </div>
-</article>
+</a>
