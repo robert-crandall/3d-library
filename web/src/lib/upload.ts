@@ -99,7 +99,7 @@ export async function uploadModel(
     } catch {
       const message = 'Could not reach the server.';
       onState(index, 'failed', message);
-      if (!model) throw new UploadFailed(message, false);
+      if (!model) throw new UploadFailed(`${message} The model may still have been created.`, false);
       failed.push(file.name);
       continue;
     }
@@ -107,7 +107,13 @@ export async function uploadModel(
     if (!response.ok) {
       const message = await failureMessage(response);
       onState(index, 'failed', message);
-      if (!model) throw new UploadFailed(message, response.status < 500);
+      if (!model) {
+        const certain = response.status < 500;
+        throw new UploadFailed(
+          certain ? message : `${message} The model may still have been created.`,
+          certain
+        );
+      }
       failed.push(file.name);
       continue;
     }
@@ -122,7 +128,7 @@ export async function uploadModel(
         // arrive, so we do not know its id and cannot even show it. This is the
         // one success that has to be reported as a failure, and it is emphatically
         // not a safe one to retry.
-        const message = 'The upload finished but the reply did not arrive.';
+        const message = 'The upload finished but the reply did not arrive. The model was created.';
         onState(index, 'failed', message);
         throw new UploadFailed(message, false);
       }
@@ -135,14 +141,29 @@ export async function uploadModel(
   if (!model) throw new Error('Upload produced no model.');
 
   // The create response only knows about its own file. Re-read so the caller
-  // gets the real counts for the grid. A failure here is not worth surfacing:
-  // the model exists either way, and the create response is a true if stale
-  // version of it.
+  // gets the real counts for the grid.
+  let refreshed: Model | undefined;
   try {
-    const refreshed = await fetch(`/api/models/${model.id}`);
-    if (refreshed.ok) model = (await refreshed.json()) as Model;
+    const response = await fetch(`/api/models/${model.id}`);
+    if (response.ok) refreshed = (await response.json()) as Model;
   } catch {
-    // Keep what we have.
+    // Handled below.
+  }
+
+  if (refreshed) {
+    model = refreshed;
+  } else if (model.fileCount !== files.length - failed.length) {
+    // The re-read is the only thing that knows how many files the model ended
+    // up with - the create response predates every file after the first. When
+    // its count happens to match what we watched land (a single-file upload, or
+    // one where everything after the first failed) it is still true and we keep
+    // it. Otherwise showing it would tell the user files are missing when they
+    // are not, and the obvious response to that is to upload the model again -
+    // which this milestone cannot undo. So report it as unresolved instead.
+    throw new UploadFailed(
+      'The files uploaded, but the library could not be read back. The model was created.',
+      false
+    );
   }
 
   // The re-read is the arbiter, not the individual responses. A file whose

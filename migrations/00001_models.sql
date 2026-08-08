@@ -10,14 +10,15 @@
 -- the domain model but not of this milestone. goose migrations are additive, and
 -- category_id in particular cannot land yet: the categories table it references
 -- does not exist until the categories milestone, so adding it now would mean a
--- bare bigint with no referential integrity.
+-- bare bigint with no referential integrity. There is no updated_at for the same
+-- reason - nothing in this milestone edits a model, and a column no write path
+-- touches would just be created_at under a name that lies.
 CREATE TABLE models (
     id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     user_id    bigint NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     parent_id  bigint REFERENCES models (id) ON DELETE CASCADE,
     name       text NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
+    created_at timestamptz NOT NULL DEFAULT now()
 );
 
 -- Partial, because every listing query this app makes is roots-only.

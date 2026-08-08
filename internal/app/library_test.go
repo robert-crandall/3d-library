@@ -194,6 +194,20 @@ func blobs(t *testing.T, dir string) (final, temp []string) {
 	return final, temp
 }
 
+// waitFor polls until cond holds, so a test can wait for the thing it actually
+// cares about instead of guessing a sleep long enough to cover a slow machine.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
 // The happy path end to end: upload, then read the same model back out of the
 // list and by id. Asserting all three in one test is what makes it a *seam*
 // test - checking only the 201 would pass even if nothing were ever committed.
@@ -976,14 +990,25 @@ func TestAbandonedUploadCommitsNothing(t *testing.T) {
 		errc <- err
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	// Wait for the server to actually stage the upload before pulling the plug.
+	// A fixed sleep here would let the test pass without the server having
+	// created anything at all, which proves nothing: of course an upload that
+	// never started committed nothing.
+	waitFor(t, "the server to stage the partial upload", func() bool {
+		_, temp := blobs(t, dir)
+		return len(temp) == 1
+	})
 	abandon()
 	if err := <-errc; err == nil {
 		t.Fatal("the abandoned request somehow succeeded")
 	}
 
-	// Give the server a moment to notice and unwind before looking.
-	time.Sleep(250 * time.Millisecond)
+	// The client sees the connection go before the handler has finished
+	// unwinding, so poll for the cleanup rather than sleeping past it.
+	waitFor(t, "the server to remove the staged file", func() bool {
+		final, temp := blobs(t, dir)
+		return len(final) == 0 && len(temp) == 0
+	})
 
 	var models []library.Model
 	if err := json.Unmarshal([]byte(mustGet(t, c, "/api/models")), &models); err != nil {
@@ -991,9 +1016,5 @@ func TestAbandonedUploadCommitsNothing(t *testing.T) {
 	}
 	if len(models) != 0 {
 		t.Errorf("got %d models, want 0 - an abandoned upload committed", len(models))
-	}
-	final, temp := blobs(t, dir)
-	if len(final) != 0 || len(temp) != 0 {
-		t.Errorf("got %d blobs and %d temp files, want none of either", len(final), len(temp))
 	}
 }

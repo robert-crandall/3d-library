@@ -78,7 +78,9 @@ describe('UploadDialog', () => {
   // dialog has to stop offering it and send the user to look instead.
   it('offers no retry when the failure does not prove nothing was created', async () => {
     mocked.mockImplementation(() =>
-      Promise.reject(new UploadFailed('Could not reach the server.', false))
+      Promise.reject(
+        new UploadFailed('Could not reach the server. The model may still have been created.', false)
+      )
     );
 
     const closed = vi.fn();
@@ -88,6 +90,8 @@ describe('UploadDialog', () => {
     await submit();
 
     const alert = await screen.findByRole('alert');
+    // Shown verbatim: only the throw site knows whether the model might exist
+    // or definitely does, so the dialog does not add a sentence of its own.
     expect(alert.textContent).toContain('Could not reach the server.');
     expect(alert.textContent).toContain('may still have been created');
     expect(screen.queryByRole('button', { name: 'Upload' })).toBeNull();

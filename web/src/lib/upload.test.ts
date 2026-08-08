@@ -224,6 +224,43 @@ describe('uploadModel', () => {
     expect(failed).toEqual([]);
   });
 
+  // The create response predates every file after the first, so if the re-read
+  // fails the count in hand is a lie. Reporting a two-file model as having one
+  // file is how the user concludes files went missing and uploads it again.
+  it('does not report a stale file count when the re-read fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!init) throw new TypeError('Failed to fetch');
+        if (String(url).startsWith('/api/models?')) {
+          return { ok: true, json: async () => ({ id: 9, name: 'Both', fileCount: 1 }) } as never;
+        }
+        return { ok: true, json: async () => ({ id: 40 }) } as never;
+      })
+    );
+
+    await expect(
+      uploadModel('Both', [file('a.stl'), file('b.stl')], () => {})
+    ).rejects.toMatchObject({ certain: false });
+  });
+
+  // The other half of the same rule: when nothing followed the first file, the
+  // create response is complete, and a failed re-read costs nothing. Failing
+  // here would turn every flaky GET into a scary dead end for no reason.
+  it('keeps the create response when a single-file re-read fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!init) return { ok: false, status: 503 } as never;
+        return { ok: true, json: async () => ({ id: 9, name: 'Solo', fileCount: 1 }) } as never;
+      })
+    );
+
+    const { model, failed } = await uploadModel('Solo', [file('a.stl')], () => {});
+    expect(model.fileCount).toBe(1);
+    expect(failed).toEqual([]);
+  });
+
   // A 201 whose body never arrives is the nastiest case in the whole flow: the
   // model exists, but we do not know its id, so it cannot be shown and cannot
   // be reported as created. What it must not be is retryable.

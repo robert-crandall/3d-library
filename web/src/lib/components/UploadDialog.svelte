@@ -96,9 +96,11 @@
     } catch (failure) {
       const message = failure instanceof Error ? failure.message : 'Upload failed.';
       if (failure instanceof UploadFailed && !failure.certain) {
-        // Might have landed. Offering Upload again here is what makes a second
-        // copy of a model nobody can delete.
-        done = `${message} The model may still have been created.`;
+        // Might have landed - or definitely did, and we could not read it back.
+        // Either way, offering Upload again here is what makes a second copy of
+        // a model nobody can delete. Which case it is is baked into the message
+        // where the failure is thrown, because only there is it known.
+        done = message;
         unresolved = true;
         return;
       }
