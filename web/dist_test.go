@@ -127,3 +127,91 @@ func readDist(t *testing.T, name string) string {
 	}
 	return string(b)
 }
+
+// assetRef matches any build-output path index.html mentions, wherever it
+// mentions it. SvelteKit's SPA build does not emit <script src>: it writes an
+// inline module that dynamic-imports its entry points, alongside
+// <link rel="modulepreload"> hints. Matching the paths rather than the tags is
+// what makes this survive that, and it covers the preload hints too - a stale
+// one is a 200-that-is-HTML the browser silently discards.
+var (
+	assetRef      = regexp.MustCompile(`/_app/immutable/[A-Za-z0-9/._-]+`)
+	stylesheetTag = regexp.MustCompile(`<link[^>]*rel="stylesheet"[^>]*>`)
+)
+
+// TestIndexHTMLResolvesEveryAsset is this milestone's substitute for a browser
+// test. The epic rules those out, so nothing else would notice the failure it
+// covers: the SPA handler falls back to index.html for any path it cannot open,
+// so a script or stylesheet that the build did not produce is served as HTML
+// with a 200. The browser then refuses to execute it and the page is blank -
+// while every server-side check, including the two tests above, still passes.
+//
+// Globbing _app/immutable is not enough for the same reason a spell-checked
+// document is not proofread: it proves *something* was built, not that the
+// thing index.html asks for is there.
+func TestIndexHTMLResolvesEveryAsset(t *testing.T) {
+	html := readDist(t, "index.html")
+
+	refs := assetRef.FindAllString(html, -1)
+	if len(refs) == 0 {
+		t.Fatal("index.html references no build output, so the SPA cannot boot")
+	}
+	seen := map[string]bool{}
+	for _, ref := range refs {
+		if seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		assertResolves(t, "asset", ref)
+	}
+
+	// Exactly the failure mode that turns a styled app into unstyled HTML: with
+	// Tailwind's preflight gone the page still renders, just as a wall of
+	// serif text, which is easy to miss in a screenshot and impossible to miss
+	// in production.
+	styles := stylesheetTag.FindAllString(html, -1)
+	if len(styles) == 0 {
+		t.Fatal("index.html links no stylesheet - did the Tailwind plugin drop out of the build?")
+	}
+	for _, tag := range styles {
+		href := hrefAttr.FindStringSubmatch(tag)
+		if href == nil {
+			t.Errorf("stylesheet link has no href: %s", tag)
+			continue
+		}
+		assertResolves(t, "stylesheet", href[1])
+	}
+}
+
+// TestIndexHTMLAppliesTheThemeBeforePaint guards the one piece of logic that
+// cannot live in a component. The theme is a class on <html>; anything that
+// sets it after hydration paints the light theme first, so a dark-theme user
+// gets a white flash on every load. A component test cannot see that, because
+// by the time a component runs the damage is done - the check has to be that
+// the script is still inline in the document head.
+func TestIndexHTMLAppliesTheThemeBeforePaint(t *testing.T) {
+	html := readDist(t, "index.html")
+
+	head, _, ok := strings.Cut(html, "</head>")
+	if !ok {
+		t.Fatal("index.html has no </head>")
+	}
+	for _, want := range []string{"localStorage", "prefers-color-scheme", "classList.add('dark')"} {
+		if !strings.Contains(head, want) {
+			t.Errorf("the pre-paint theme script in <head> no longer mentions %q", want)
+		}
+	}
+}
+
+func assertResolves(t *testing.T, kind, ref string) {
+	t.Helper()
+	// Only same-origin absolute paths are ours to resolve. A CDN URL would be a
+	// different bug and this is not the test that finds it.
+	if !strings.HasPrefix(ref, "/") {
+		return
+	}
+	name := strings.TrimPrefix(ref, "/")
+	if _, err := fs.Stat(Dist, name); err != nil {
+		t.Errorf("index.html references %s %q, which the build does not produce: %v", kind, ref, err)
+	}
+}

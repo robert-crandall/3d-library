@@ -1,11 +1,13 @@
 # AGENTS.md
 
-A template for a small self-hosted web app: a SvelteKit SPA compiled into a
-single Go binary, with auth, Postgres, file uploads, and web push already
-working. The backend is [`go-home-server`][foundation], imported as a Go module
-rather than vendored - so `internal/` here is thin, and most behaviour you might
-go looking for lives in that dependency. What this repo owns is the frontend,
-the embed, and the build.
+A private library for 3D-printable models - upload the STLs and the slicer
+project that made them, keep them together, find them later. A SvelteKit SPA
+compiled into a single Go binary, with Postgres behind it.
+
+Auth, sessions, and web push come from [`go-home-server`][foundation], imported
+as a Go module rather than vendored, so behaviour you cannot find here probably
+lives in that dependency. What this repo owns is `internal/library` (models,
+files, uploads), the frontend, the embed, and the build.
 
 [foundation]: https://github.com/robert-crandall/go-home-server
 
@@ -28,8 +30,11 @@ The two test suites want their own databases, and this repo does not create
 them:
 
 ```sh
-createdb 3d-library_test    # the DB-backed Go test
+createdb 3d-library_test    # the DB-backed Go tests
 ```
+
+`UPLOAD_DIR` is **required** - unlike the template this came from, where it was
+optional. `make setup` creates `./uploads` and `.env.example` points at it.
 
 ## Commands
 
@@ -67,8 +72,11 @@ There is no linter or formatter beyond `go vet` and `svelte-check`. Keep Go
 | `cmd/openapi` | spec generator - runs with nil DB pools, on purpose |
 | `cmd/mcp` | MCP server, deliberately zero tools |
 | `internal/app/routes.go` | **every route is registered here**, by both entry points |
+| `internal/library` | models, files, and the upload path - the app's own domain |
+| `migrations/` | embedded `.sql`, applied at startup; append, never edit |
 | `internal/cicd` | no code - table-tests the shell scripts under `scripts/ci/` |
-| `web/src/lib/` | API client and auth store; no styling layer, by design |
+| `web/src/lib/` | API client, auth store, upload helper, formatting |
+| `web/src/lib/components/` | shared Svelte components |
 | `web/src/routes/(app)/` | signed-in pages; the auth guard wraps this group |
 | `web/src/**/*.test.ts` | Vitest component and unit tests |
 | `scripts/ci/` | the decisions `.github/workflows/publish.yml` and `notify.yml` make |
@@ -100,6 +108,15 @@ than inventing a second pattern.
 - **API errors are the server's words** - `web/src/lib/api/errors.ts`. There is
   no status-code-to-message table in the frontend and adding one is a
   regression.
+- **Colours are named once, in `web/src/app.css`.** The palette is Tailwind v4
+  `@theme` variables with a `.dark` block overriding the same names, so markup
+  says `bg-surface`, never `bg-white dark:bg-neutral-900`. A `dark:` variant in
+  a component means a colour escaped the palette.
+- **Uploads do not use the generated API client.** The upload operations
+  declare an opaque binary request body so huma streams them instead of
+  buffering; `openapi-typescript` renders that as `string`, which the client
+  cannot express. `web/src/lib/upload.ts` uses raw `fetch` with `FormData` for
+  that reason and no other.
 - **Go tests** are stdlib `testing` only - no assertion library - and usually
   table-driven with the table inlined in the `range`. `TestProbeURL` in
   `cmd/server/healthcheck_test.go` is the exemplar; match the shape of the
@@ -125,10 +142,13 @@ These are the things that waste an hour.
 - **`TEST_DATABASE_URL` unset means the DB-backed test skips**, so a green
   `make test` can mean "it did not run". To actually run it:
   `TEST_DATABASE_URL=postgres://localhost:5432/3d-library_test?sslmode=disable go test ./internal/app/ -run TestAuthRefusalStrings`
-- **`web/src/app.css` is one `@import` and it stays that way.** No component
-  library, no theme, no tokens, no `tailwind.config.js`. Adding a house style
-  back is a regression against the point of the template, not an improvement -
-  see D5. A fork that wants daisyUI back runs `cd web && bun add -d daisyui`
+- **`web/src/app.css` holds the palette and nothing else.** D5's rule was "no
+  component library", and that still holds: there is no daisyUI, no
+  `tailwind.config.js`, and no house style. What this app added on top is an
+  `@theme` block naming the design's colours, plus a `.dark` block overriding
+  the same names - because two themes with the colours inline in markup means
+  every element carries its own `dark:` twin, and one of them eventually gets
+  missed. A fork that wants daisyUI back runs `cd web && bun add -d daisyui`
   *and* adds a `@plugin` block - the package is gone from `package.json`, so the
   CSS on its own fails the build. D5 records the two cascade facts that bit us
   when we shipped it.

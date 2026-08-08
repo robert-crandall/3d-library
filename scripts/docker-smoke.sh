@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# Proves the container image actually behaves the way M4 says it does, against a
-# throwaway Postgres on a private docker network. Every check below maps to an
-# acceptance criterion in issue #7; nothing else belongs here.
+# Proves the container image actually behaves the way the deployment story says
+# it does, against a throwaway Postgres on a private docker network. It came
+# from the foundation template, where every check mapped to an acceptance
+# criterion; the upload checks now go through this app's library routes.
 #
 # This is deliberately NOT in CI. D9's design has pull requests stop at
 # `docker-build`, and a full container integration run would be a slow job
@@ -53,7 +54,6 @@ chmod 0777 "$UPLOADS"
 
 jar="$WORK/cookies.txt"
 photo="$WORK/photo.png"
-got="$WORK/downloaded.png"
 
 # APP_ENV=development is not incidental: production sets Secure cookies, no
 # login survives plain HTTP, and every upload check below would then fail for a
@@ -143,15 +143,15 @@ iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAA
 PNG
 head -c 64 /dev/urandom >>"$photo"
 
-body="$(curl -sS -b "$jar" -X POST "$base/api/files" -F "file=@$photo;type=image/png")"
-file_id="$(printf '%s' "$body" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')"
-[ -n "$file_id" ] || die "upload response had no id: $body"
+body="$(curl -sS -b "$jar" -X POST "$base/api/models?name=Smoke" -F "file=@$photo;type=image/png")"
+model_id="$(printf '%s' "$body" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')"
+[ -n "$model_id" ] || die "upload response had no id: $body"
 
 # The directory is a fresh mktemp -d, so anything in it got there through the
 # bind mount during this run.
 host_dir_has_a_blob ||
 	die "$UPLOADS is empty after an upload - the blob went into the container layer"
-ok "the upload wrote through to the host (file id $file_id)"
+ok "the upload wrote through to the host (model id $model_id)"
 
 # --- 3 -----------------------------------------------------------------------
 step "3/7  The photo survives replacing the container"
@@ -161,9 +161,18 @@ docker run -d --name "$APP" --network "$NET" "${app_env[@]}" "${health_flags[@]}
 	-p "127.0.0.1:$PORT:8080" "$IMAGE" >/dev/null
 wait_for_health "$APP" healthy
 
-curl -sS -b "$jar" -o "$got" "$base/api/files/$file_id"
-cmp -s "$photo" "$got" || die "the downloaded bytes differ - the blob only lived in the old container"
-ok "same bytes back from a brand new container"
+# There is no download route yet (milestone 2), so persistence is checked from
+# both ends instead: the new container still knows about the model, and the
+# bytes under the bind mount are still the ones that were uploaded. Together
+# those are what "the blob did not live in the container layer" means.
+body="$(curl -sS -b "$jar" "$base/api/models/$model_id")"
+printf '%s' "$body" | grep -q '"filename"' ||
+	die "the new container does not know about model $model_id: $body"
+
+blob="$(find "$UPLOADS" -type f -not -name '.tmp-*' | head -1)"
+[ -n "$blob" ] || die "no blob under $UPLOADS after replacing the container"
+cmp -s "$photo" "$blob" || die "the stored bytes differ from what was uploaded"
+ok "the model and its bytes both survived a brand new container"
 
 # --- 4 -----------------------------------------------------------------------
 step "4/7  The healthcheck binary fails when the app isn't serving"
@@ -204,26 +213,28 @@ docker rm -f "$RO" >/dev/null
 ok "refused to start: $(printf '%s' "$out" | tail -1)"
 
 # --- 6 -----------------------------------------------------------------------
-step "6/7  With UPLOAD_DIR unset it boots and serves no file routes"
-noup_port=$((PORT + 1))
-docker run -d --name "$NOUP" --network "$NET" "${app_env[@]}" "${health_flags[@]}" \
-	-p "127.0.0.1:$noup_port:8080" "$IMAGE" >/dev/null
-wait_for_health "$NOUP" healthy
+step "6/7  With UPLOAD_DIR unset it refuses to start"
+# The template made uploads optional and 404'd the routes without a directory.
+# This app cannot: the library *is* the app, and a running instance that drops
+# every upload would be worse than one that will not boot. So the check is
+# inverted from the one the template shipped.
+docker run -d --name "$NOUP" --network "$NET" "${app_env[@]}" "$IMAGE" >/dev/null
 
-# Both the status and the content type, because a missing /api route and the SPA
-# fallback both answer 404 - the fallback's is text/html. The content type is
-# what distinguishes "the route isn't registered" from "the SPA answered".
-# Unauthenticated on purpose: if the route WERE still registered, the
-# foundation's upload middleware returns 401 before it ever touches the nil
-# service, so this can't pass for the wrong reason.
-read -r code ctype < <(curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' \
-	-X POST "http://127.0.0.1:$noup_port/api/files")
-[ "$code" = "404" ] || die "POST /api/files returned $code, want 404"
-case "$ctype" in
-application/problem+json*) ;;
-*) die "POST /api/files answered 404 as '$ctype' - that's the SPA fallback, not a missing route" ;;
-esac
-ok "healthy, and POST /api/files is 404 application/problem+json"
+noup_rc=""
+attempts=30
+while [ $((attempts--)) -gt 0 ]; do
+	read -r running noup_rc < <(docker inspect --format '{{.State.Running}} {{.State.ExitCode}}' "$NOUP")
+	[ "$running" = "false" ] && break
+	noup_rc=""
+	sleep 1
+done
+[ -n "$noup_rc" ] || die "the container was still running after 30s with no UPLOAD_DIR"
+[ "$noup_rc" != "0" ] || die "the container exited 0 with no UPLOAD_DIR"
+
+out="$(docker logs "$NOUP" 2>&1)"
+printf '%s' "$out" | grep -q 'UPLOAD_DIR' ||
+	die "exited $noup_rc but not for UPLOAD_DIR: $out"
+ok "refused to start: $(printf '%s' "$out" | tail -1)"
 docker rm -f "$NOUP" >/dev/null
 
 # --- 7 -----------------------------------------------------------------------

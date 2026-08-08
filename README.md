@@ -1,13 +1,14 @@
 # 3D Library
 
-A starting point for a small self-hosted web app: a SvelteKit frontend embedded
-in a single Go binary, with auth, Postgres, file uploads, and web push already
-wired up.
+A private library for 3D-printable models: upload the STLs and the slicer
+project that produced them, keep them together, and find them again later. See
+[`docs/brief.md`](docs/brief.md) for what it is for.
 
-The backend work lives in [`go-home-server`][foundation], which this repo
-imports as a Go module rather than vendoring. You get its features for free and
-its bug fixes with a version bump. What's here is the shell around it: the
-frontend, the embed, and the build.
+It is a SvelteKit frontend embedded in a single Go binary, with Postgres behind
+it. The auth, session, and web-push plumbing lives in
+[`go-home-server`][foundation], which this repo imports as a Go module rather
+than vendoring. The library itself - models, files, and the upload path - is in
+`internal/library`.
 
 [foundation]: https://github.com/robert-crandall/go-home-server
 
@@ -506,8 +507,7 @@ with no secrets configured works; it just doesn't tell anyone anything.
 | `DATABASE_URL` | **yes** | Postgres connection string. No default. |
 | `ADDR` | no | Listen address, default `:8080`. |
 | `APP_ENV` | no | `production` sets `Secure` on the session cookie. |
-| `UPLOAD_DIR` | no | Where file uploads are written. Unset disables them entirely - see below. |
-| `UPLOAD_MAX_BYTES` | no | Per-upload size cap. |
+| `UPLOAD_DIR` | **yes** | Where uploaded files are written. See below. |
 | `ALLOW_OPEN_REGISTRATION` | no | Default false: the first user registers, then registration closes. |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | no | Web push, off unless set. All three together or none: one key alone is a startup error, and so is a missing or malformed subject (it must be a `mailto:` or `https:` URL). |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URL` | no | Sign in with Google, off unless set. All three together or none - set one and the app won't start. See "Sign in with Google" above. |
@@ -516,14 +516,17 @@ with no secrets configured works; it just doesn't tell anyone anything.
 cookie is dropped by the browser. Put TLS termination in front of it, or leave
 `APP_ENV` unset behind a trusted network.
 
-### If your app stores files
+### The upload directory
+
+`UPLOAD_DIR` is required. The template it came from treated uploads as optional;
+here they are the entire point, so there is nothing to run without one.
 
 Create the directory **before the first run** and give it to uid `65532`, which
 is who the distroless `nonroot` image runs as:
 
 ```sh
-sudo mkdir -p /srv/myapp/uploads
-sudo chown 65532:65532 /srv/myapp/uploads
+sudo mkdir -p /srv/3d-library/uploads
+sudo chown 65532:65532 /srv/3d-library/uploads
 ```
 
 Both halves matter. Docker creates a missing bind-mount source itself, owned by
@@ -531,16 +534,6 @@ root, and the app then can't write to it. And the app *checks*: at startup it
 stats `UPLOAD_DIR` and write-probes it, and refuses to boot if either fails. That
 crash is the feature. The alternative is uploads quietly landing in the
 container's own filesystem, where the next `docker pull` throws them away.
-
-### If your app doesn't
-
-Leave `UPLOAD_DIR` unset, mount nothing, and skip the section above entirely. The
-`/api/files*` routes simply aren't registered.
-
-One consequence worth knowing: `docs/openapi.json` is generated from the whole
-template, so it still describes the file endpoints. A deployment with uploads off
-serves a subset of its own published spec. That's deliberate - the committed spec
-is the template's contract, not a per-deployment manifest.
 
 ### Compose
 
@@ -560,7 +553,7 @@ services:
       # Uploads: delete this line AND the volumes block below if you have none.
       UPLOAD_DIR: /data/uploads
     volumes:
-      - /srv/myapp/uploads:/data/uploads
+      - /srv/3d-library/uploads:/data/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -608,17 +601,16 @@ curl -i http://localhost:8080/healthz     # 200 {"status":"ok"} / 503 {"status":
 
 ### Backups
 
-If you have uploads, there are **two** things to back up and they have to be
-restored together. Restoring Postgres without its matching `UPLOAD_DIR` leaves
-rows pointing at files that don't exist; the reverse leaves orphaned blobs
-nothing references. Without uploads, it's just Postgres.
+There are **two** things to back up and they have to be restored together.
+Restoring Postgres without its matching `UPLOAD_DIR` leaves rows pointing at
+files that don't exist; the reverse leaves orphaned blobs nothing references.
 
 ### Verifying the image
 
 `make docker-smoke` builds the image and runs every one of these claims against a
 throwaway Postgres: it boots healthy, an upload lands on the host and survives
-replacing the container, an unwritable `UPLOAD_DIR` refuses to start, uploads-off
-serves no file routes, and killing Postgres turns the container unhealthy. It
+replacing the container, an unwritable or missing `UPLOAD_DIR` refuses to start,
+and killing Postgres turns the container unhealthy. It
 needs Docker and takes a couple of minutes. It's not in CI - CI stops at building
 the image.
 

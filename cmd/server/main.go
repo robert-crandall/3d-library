@@ -90,7 +90,10 @@ func main() {
 	// a container layer that gets thrown away on the next deploy.
 	librarySvc, err := library.NewService(pool, library.Options{Dir: cfg.UploadDir})
 	if err != nil {
-		log.Fatal(err)
+		// Prefixed with the variable name because library.NewService talks
+		// about a "upload dir" it was handed, and the operator reading this log
+		// needs to know which knob to turn.
+		log.Fatalf("UPLOAD_DIR: %v", err)
 	}
 
 	// Sign in with Google, also optional. The gate is "any of the three set"

@@ -1,5 +1,14 @@
 # Tech stack
 
+> **This document describes the foundation as inherited.** 3D Library was built
+> from `go-home-template` and its decisions D1-D11 still hold. Two things have
+> since diverged, and where they conflict this app's code wins:
+>
+> - `UPLOAD_DIR` is **required**, not optional. Storing models is the app; there
+>   are no "uploads off" routes to un-register.
+> - The template's `files` service is replaced by `internal/library`, which owns
+>   models and their files together. `/api/files*` no longer exists.
+
 Status: proposed
 Date: 2026-07-29
 
