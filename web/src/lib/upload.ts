@@ -115,7 +115,17 @@ export async function uploadModel(
     onState(index, 'done');
 
     if (!model) {
-      model = (await response.json()) as Model;
+      try {
+        model = (await response.json()) as Model;
+      } catch {
+        // The model was created - the server said 201 - but the body did not
+        // arrive, so we do not know its id and cannot even show it. This is the
+        // one success that has to be reported as a failure, and it is emphatically
+        // not a safe one to retry.
+        const message = 'The upload finished but the reply did not arrive.';
+        onState(index, 'failed', message);
+        throw new UploadFailed(message, false);
+      }
     }
   }
 

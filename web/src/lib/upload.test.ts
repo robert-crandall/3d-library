@@ -224,6 +224,26 @@ describe('uploadModel', () => {
     expect(failed).toEqual([]);
   });
 
+  // A 201 whose body never arrives is the nastiest case in the whole flow: the
+  // model exists, but we do not know its id, so it cannot be shown and cannot
+  // be reported as created. What it must not be is retryable.
+  it('does not call a created model retryable when its reply was lost', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 201,
+        json: async () => {
+          throw new SyntaxError('Unexpected end of JSON input');
+        }
+      }) as unknown as Response)
+    );
+
+    await expect(uploadModel('Lost', [file('a.stl')], () => {})).rejects.toMatchObject({
+      certain: false
+    });
+  });
+
   it('refuses an empty selection', async () => {
     await expect(uploadModel('Nothing', [], () => {})).rejects.toThrow('at least one file');
   });

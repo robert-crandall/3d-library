@@ -52,6 +52,7 @@ describe('UploadDialog', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('b.stl');
     expect(screen.queryByRole('button', { name: 'Upload' })).toBeNull();
+    // Plain Done: the model is already in the grid and nothing is in doubt.
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeNull();
   });
 
@@ -80,16 +81,23 @@ describe('UploadDialog', () => {
       Promise.reject(new UploadFailed('Could not reach the server.', false))
     );
 
-    render(UploadDialog, { onclose: vi.fn(), onuploaded: vi.fn() });
+    const closed = vi.fn();
+    render(UploadDialog, { onclose: closed, onuploaded: vi.fn() });
 
     await pickAFile();
     await submit();
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('Could not reach the server.');
-    expect(alert.textContent).toContain('reload the library');
+    expect(alert.textContent).toContain('may still have been created');
     expect(screen.queryByRole('button', { name: 'Upload' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeNull();
+    // Not "Done". Closing on its own would put the user back on a page whose
+    // Upload button is right there, and the question of whether the model
+    // exists would still be open. Re-reading the library is what answers it.
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
+    const onclose = vi.mocked(closed);
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload library' }));
+    expect(onclose).toHaveBeenCalledWith({ reload: true });
   });
 
   // The Upload button is gone once the dialog goes terminal, but the name field

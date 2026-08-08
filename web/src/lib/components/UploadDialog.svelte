@@ -13,7 +13,7 @@
     onclose,
     onuploaded
   }: {
-    onclose: () => void;
+    onclose: (opts?: { reload?: boolean }) => void;
     onuploaded: (model: Model, opts?: { keepOpen?: boolean }) => void;
   } = $props();
 
@@ -29,6 +29,11 @@
   // knows and offers Done - because nothing in this milestone can delete a
   // duplicate once it exists.
   let done = $state('');
+  // True when `done` was reached without knowing what the server did. Closing
+  // then is not enough: the page would offer Upload again and the user could
+  // make the second copy this whole dance exists to prevent. The way out is to
+  // re-read the library, which settles the question either way.
+  let unresolved = $state(false);
 
   function pick(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
@@ -82,13 +87,19 @@
       }
       // Put it in the grid first, so what the user sees matches what exists.
       onuploaded(model, { keepOpen: true });
-      done = `${model.name} was created without ${failed.join(', ')}. You can add the rest once editing lands.`;
+      // The count comes from re-reading the model and is authoritative; the
+      // names are the best guess we have. They can disagree - a file whose
+      // response was lost is present but still on this list - so the sentence
+      // leads with the count and hedges the names rather than the other way
+      // round.
+      done = `${model.name} has ${model.fileCount} of ${queue.length} files. These may not have uploaded: ${failed.join(', ')}. You can add the rest once editing lands.`;
     } catch (failure) {
       const message = failure instanceof Error ? failure.message : 'Upload failed.';
       if (failure instanceof UploadFailed && !failure.certain) {
         // Might have landed. Offering Upload again here is what makes a second
         // copy of a model nobody can delete.
-        done = `${message} The model may still have been created - reload the library and check before uploading it again.`;
+        done = `${message} The model may still have been created.`;
+        unresolved = true;
         return;
       }
       error = message;
@@ -169,15 +180,15 @@
         <button
           type="button"
           class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink"
-          onclick={onclose}
+          onclick={() => onclose({ reload: unresolved })}
         >
-          Done
+          {unresolved ? 'Reload library' : 'Done'}
         </button>
       {:else}
         <button
           type="button"
           class="rounded border border-line-strong px-3 py-1.5 text-sm"
-          onclick={onclose}
+          onclick={() => onclose()}
           disabled={busy}
         >
           Cancel

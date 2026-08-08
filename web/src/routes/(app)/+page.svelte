@@ -14,18 +14,17 @@
   let error = $state('');
   let uploading = $state(false);
 
-  // Bumped by every load and by every upload. A load only gets to write to the
-  // page if nothing else has happened since it started: a slow first load that
-  // lands after the user has already uploaded something would otherwise replace
-  // the grid with a list that predates the upload.
-  let generation = 0;
+  // You can only add to a library you have actually seen. Uploading over a
+  // library that failed to load, or one still arriving, means prepending the
+  // new model to a list that is wrong or about to be replaced - and then either
+  // the upload disappears when the load lands, or the load is thrown away and
+  // everything already in the library disappears instead. Waiting costs one
+  // fast GET and removes both.
 
   async function load() {
-    const mine = ++generation;
     error = '';
     try {
       const { data, error: failure } = await api.GET('/api/models');
-      if (mine !== generation) return;
       if (failure) {
         error = apiErrorMessage(failure, 'Could not load the library.');
         status = 'failed';
@@ -36,7 +35,6 @@
     } catch {
       // openapi-fetch lets a fetch-level rejection through, so without this the
       // page would sit on "Loading…" forever.
-      if (mine !== generation) return;
       error = 'Could not reach the server.';
       status = 'failed';
     }
@@ -48,13 +46,7 @@
   // returned the finished model, so a second round trip would only be a chance
   // for the two to disagree.
   function uploaded(model: Model, opts?: { keepOpen?: boolean }) {
-    generation += 1;
     models = [model, ...models];
-    // The grid may still be showing "could not load the library" from a failed
-    // load. There is now something to show, so showing that instead would be a
-    // lie about a model the user just watched upload.
-    status = 'ready';
-    error = '';
     // A partial upload keeps the dialog open to say what is missing, but the
     // model still belongs in the grid immediately: it exists, and a library
     // that does not show it is lying.
@@ -70,8 +62,9 @@
     </div>
     <button
       type="button"
-      class="rounded bg-accent px-4 py-2 text-sm font-medium text-accent-ink"
+      class="rounded bg-accent px-4 py-2 text-sm font-medium text-accent-ink disabled:opacity-50"
       onclick={() => (uploading = true)}
+      disabled={status !== 'ready'}
     >
       Upload
     </button>
@@ -115,5 +108,15 @@
 </div>
 
 {#if uploading}
-  <UploadDialog onclose={() => (uploading = false)} onuploaded={uploaded} />
+  <UploadDialog
+    onclose={(opts) => {
+      uploading = false;
+      // The dialog could not tell whether the upload landed. Re-reading the
+      // library is what settles it, and it has to happen before Upload is
+      // available again or the user can make the second copy this milestone
+      // cannot delete.
+      if (opts?.reload) load();
+    }}
+    onuploaded={uploaded}
+  />
 {/if}
