@@ -582,6 +582,14 @@ func TestAHostileDirectoryIsRefusedBeforeParsing(t *testing.T) {
 			binary.LittleEndian.PutUint32(b[p+16:], uint32(p-100))
 			return b
 		}()},
+		{"declares a comment that stops short of the end", func() []byte {
+			// archive/zip accepts a comment length that does not reach the end
+			// of the file - it only rejects one that runs past it - so the
+			// record below is the one it will use. A search that insisted the
+			// comment end exactly at EOF would skip this record, find no other,
+			// and wave the archive through.
+			return append(append([]byte(nil), honest...), make([]byte, 8)...)
+		}()},
 		{"buries a second record in the archive comment", func() []byte {
 			b := append([]byte(nil), honest...)
 			p := len(b) - 22
