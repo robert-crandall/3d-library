@@ -77,18 +77,12 @@ describe('MeshViewer', () => {
       ));
   });
 
-  it('says so when the model has nothing previewable, and does not fetch', async () => {
-    render(MeshViewer, { modelId: 7, files: [gcode] });
-    expect(await screen.findByText(/no STL or 3MF file to preview/)).not.toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it('hides the shading controls when there is nothing to shade', async () => {
     // Three buttons that cannot change anything are noise a screen reader still reads
     // out. Markup that is merely hidden would satisfy a `toBeVisible` check and fail
     // this one.
-    render(MeshViewer, { modelId: 7, files: [gcode] });
-    await screen.findByText(/no STL or 3MF file to preview/);
+    render(MeshViewer, { modelId: 7, files: [{ ...stl, size: MAX_PREVIEW_BYTES + 1 }] });
+    await screen.findByRole('alert');
     expect(screen.queryByRole('group', { name: 'Shading' })).toBeNull();
   });
 

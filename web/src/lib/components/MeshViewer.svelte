@@ -27,6 +27,10 @@
 
   let { modelId, files }: { modelId: number; files: ModelFile[] } = $props();
 
+  // `files` is expected to hold at least one previewable file - the page decides whether
+  // there is anything to preview and leaves the panel out when there is not, so this
+  // component never has to render "nothing here" for a whole model.
+  //
   // 3MF ahead of STL when a model has both. A 3MF carries its own unit and its object
   // structure, where an STL is a bag of triangles everyone agrees to read as
   // millimetres, so it is the better of the two to open on. Without this the default is
@@ -42,8 +46,8 @@
   // silently snaps back to the mesh.
   const selected = $derived(files.find((file) => file.id === selectedId) ?? openOn);
 
-  type Status = 'empty' | 'unsupported' | 'too-large' | 'loading' | 'ready' | 'failed';
-  let status = $state<Status>('empty');
+  type Status = 'unsupported' | 'too-large' | 'loading' | 'ready' | 'failed';
+  let status = $state<Status>('loading');
   let error = $state('');
   let readout = $state('');
   let shading = $state<Shading>('solid');
@@ -169,12 +173,11 @@
         void load(file);
         return;
       }
-      // Nothing to draw, for one of two reasons: the model has no mesh file at all, or
-      // the user picked one of the others in the strip. Both stop whatever the last
+      // The user picked one of the other files in the strip. Stop whatever the last
       // selection started, or a mesh still in flight paints over the message.
       generation++;
       inFlight?.abort();
-      status = file ? 'unsupported' : 'empty';
+      status = 'unsupported';
       error = '';
       readout = '';
     });
@@ -210,8 +213,6 @@
       <div class="absolute inset-0 flex items-center justify-center px-6 text-center">
         {#if status === 'loading'}
           <p class="text-sm text-muted">Loading preview…</p>
-        {:else if status === 'empty'}
-          <p class="text-sm text-muted">This model has no STL or 3MF file to preview.</p>
         {:else if status === 'unsupported'}
           <p class="max-w-md text-sm text-muted">
             There is no 3D preview for {selected?.filename}. The viewer shows STL and 3MF
