@@ -147,7 +147,12 @@ describe('UploadDialog', () => {
     // keepOpen, so the dialog can say what is missing rather than vanishing.
     expect(onuploaded.mock.calls[0][1]).toEqual({ keepOpen: true });
 
-    expect((await screen.findByRole('alert')).textContent).toContain('b.stl');
+    // "Could not confirm", not "did not upload": b.stl's response may have been
+    // lost after the write landed, and telling the user it failed is what makes
+    // them add a second copy.
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('b.stl');
+    expect(alert.textContent).not.toContain('did not upload');
     expect(screen.queryByRole('button', { name: 'Upload' })).toBeNull();
     // Plain Done: the model is already in the grid and nothing is in doubt.
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeNull();
@@ -314,7 +319,12 @@ describe('UploadDialog in add-files mode', () => {
     await fireEvent.change(input);
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('b.stl');
+    // "Could not confirm", not "did not upload": b.stl's response may have been
+    // lost after the write landed, and telling the user it failed is what makes
+    // them add a second copy.
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('b.stl');
+    expect(alert.textContent).not.toContain('did not upload');
     expect(screen.queryByRole('button', { name: 'Add' })).toBeNull();
     expect(onclose).not.toHaveBeenCalled();
 
@@ -325,15 +335,16 @@ describe('UploadDialog in add-files mode', () => {
     expect(mockedAdd.mock.calls.length).toBe(sent + 1);
   });
 
-  // Cancel is not "nothing happened". Files may have landed before the user
-  // gave up on the rest, and a stale count on the model page is the one thing
-  // this flow must not leave behind.
-  it('still asks for a reload when cancelled', async () => {
+  // Cancel really is "nothing happened", in add mode too: it is disabled while
+  // an upload is in flight, and a partial add replaces it with Done. So the
+  // only way to reach it is a queue nobody sent, and reloading anyway would be
+  // a request for a state that cannot have changed.
+  it('does not ask for a reload when an add is cancelled before sending', async () => {
     const onclose = vi.fn();
     render(UploadDialog, { model, onclose });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(onclose).toHaveBeenCalledWith({ reload: true });
+    expect(onclose).toHaveBeenCalledWith({ reload: false });
   });
 
   it('does not ask the library to reload when a create is cancelled', async () => {

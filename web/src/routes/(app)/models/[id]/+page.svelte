@@ -224,7 +224,7 @@
         -->
         <div
           aria-hidden="true"
-          class="viewer-hatch flex h-64 items-center justify-center rounded-tile border border-line"
+          class="hatch flex h-64 items-center justify-center rounded-tile border border-line"
         >
           <span class="text-xs text-faint">3D preview</span>
         </div>
@@ -382,3 +382,17 @@
     oncancel={() => (deletingModel = false)}
   />
 {/if}
+
+<style>
+  /* Scoped, not in app.css, because it is this screen's placeholder and not a
+     palette entry. Built from the palette variables so the .dark block re-tints
+     it without a second rule here. */
+  .hatch {
+    background-color: var(--color-sidebar);
+    background-image: repeating-linear-gradient(
+      45deg,
+      var(--color-line) 0 8px,
+      var(--color-sidebar) 8px 16px
+    );
+  }
+</style>

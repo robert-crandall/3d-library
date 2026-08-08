@@ -649,9 +649,15 @@ func (s *Service) DeleteModel(ctx context.Context, userID, id int64) error {
 		return fmt.Errorf("library: check model: %w", err)
 	}
 
-	// Children are deleted explicitly rather than left to ON DELETE CASCADE,
+	// Files are deleted explicitly rather than left to ON DELETE CASCADE,
 	// because RETURNING is how the storage keys are learnt. The cascade stays
 	// as the backstop it already was.
+	//
+	// Assumption, load-bearing and true only until versions exist: a model has
+	// no children. models.parent_id cascades, so once M9 can create a version,
+	// deleting its parent will drop the version's rows here and leave its blobs
+	// on disk. Whoever builds nesting has to widen this to the subtree - and
+	// widen the FOR UPDATE above with it, since the lock covers this row only.
 	rows, err := tx.Query(ctx,
 		`DELETE FROM model_files WHERE model_id = $1 RETURNING storage_key`, id)
 	if err != nil {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MAX_FILE_BYTES, uploadModel } from './upload';
+import { addFiles, MAX_FILE_BYTES, uploadModel } from './upload';
 
 function ok(body: unknown) {
   return { ok: true, status: 201, json: async () => body } as Response;
@@ -367,3 +367,65 @@ describe('uploadModel', () => {
 function file(name: string): File {
   return new File(['solid'], name);
 }
+
+describe('addFiles', () => {
+  it('posts each file to the model and reports which ones failed', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const name = ((init?.body as FormData).get('file') as File).name;
+        calls.push(`${url}:${name}`);
+        if (name === 'b.stl') return { ok: false, status: 500, json: async () => ({}) } as Response;
+        return ok({ id: 1 });
+      })
+    );
+
+    const states: string[] = [];
+    const { failed } = await addFiles(7, [file('a.stl'), file('b.stl'), file('c.stl')], (i, s) =>
+      states.push(`${i}:${s}`)
+    );
+
+    // c.stl matters most: a helper that stopped at the first failure would
+    // leave the user with two files to re-pick and only one named.
+    expect(failed).toEqual(['b.stl']);
+    expect(calls).toEqual([
+      '/api/models/7/files:a.stl',
+      '/api/models/7/files:b.stl',
+      '/api/models/7/files:c.stl'
+    ]);
+    expect(states).toEqual([
+      '0:uploading',
+      '0:done',
+      '1:uploading',
+      '1:failed',
+      '2:uploading',
+      '2:done'
+    ]);
+  });
+
+  // The reason the caller's message hedges. fetch rejects for a connection lost
+  // after the request was sent as well as for one that never left, so this file
+  // may be in the database already - addFiles cannot tell, and neither can the
+  // user, which is why the answer is a re-read rather than a retry.
+  it('reports a transport failure as a failure, without claiming nothing landed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      })
+    );
+
+    const errors: string[] = [];
+    const { failed } = await addFiles(7, [file('a.stl')], (_i, _s, error) => {
+      if (error) errors.push(error);
+    });
+
+    expect(failed).toEqual(['a.stl']);
+    expect(errors).toEqual(['Could not reach the server.']);
+  });
+
+  it('refuses an empty pick rather than posting nothing', async () => {
+    await expect(addFiles(7, [], () => {})).rejects.toThrow('Pick at least one file.');
+  });
+});

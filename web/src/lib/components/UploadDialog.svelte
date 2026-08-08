@@ -109,10 +109,12 @@
           // re-reads the model, and the user picks the missing files again
           // against a count the server vouches for.
           //
-          // No count in the message, unlike the create flow below: the page
-          // re-reads the moment this closes, so all this has to say is which
-          // files to try again.
-          done = `These did not upload: ${failed.join(', ')}. Add files again to retry them.`;
+          // Hedged, not asserted: a POST whose response was lost is on this
+          // list and in the database both. No count either, unlike the create
+          // flow below - the page re-reads the moment this closes, so the file
+          // list the user lands on is the answer and this only has to point at
+          // it.
+          done = `Could not confirm these: ${failed.join(', ')}. Check the file list and add anything missing.`;
           return;
         }
         onclose({ reload: true });
@@ -154,11 +156,12 @@
   }
 
   function close() {
-    // Add mode always asks for a reload: files may have landed before the rest
-    // failed or before the user gave up, and a stale count on the model page is
-    // the one thing this flow must not leave behind. From the create flow only
-    // an unresolved outcome needs it, because everything else is already known.
-    onclose({ reload: unresolved || model !== undefined });
+    // Only the two outcomes that actually leave something behind. A cancel is
+    // genuinely nothing happened in either mode: it is disabled while an upload
+    // is in flight, and both of the states where files have landed replace it
+    // with the terminal button. So `done` in add mode is a partial add, and
+    // `unresolved` is a create that may or may not have finished.
+    onclose({ reload: unresolved || (model !== undefined && done !== '') });
   }
 
   function dismiss() {
