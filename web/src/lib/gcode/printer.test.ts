@@ -222,9 +222,19 @@ describe('volumeFor', () => {
     expect(volume).toEqual(printer.volume);
   });
 
-  it('draws the grid when there is nothing to check it against', () => {
-    // An empty parse has no bounds. Nothing has been contradicted, so the assumed
-    // volume still stands.
-    expect(volumeFor(printer, undefined)).toEqual(printer.volume);
+  it('draws nothing for a belt print that has not climbed far yet', () => {
+    // The belt fixture is 990 mm down the belt, but the first few layers of the same
+    // print are not. A tolerance loose enough for a skirt is far too loose below the
+    // bed, where nothing legitimately prints at all.
+    const volume = volumeFor(printer, { min: [112, 100, -10], max: [137, 130, -8] });
+    expect(volume).toBeUndefined();
+  });
+
+  it('keeps the grid for a print taller than the volume it assumed', () => {
+    // An unrecognised printer gets a 256-cubed guess. A 300 mm print on a real 400 mm
+    // machine has not changed coordinate frames - the guess is just short, and the bed
+    // outline is still where the bed is.
+    const volume = volumeFor(printer, { min: [60, 60, 0.2], max: [110, 110, 300] });
+    expect(volume).toEqual(printer.volume);
   });
 });

@@ -150,21 +150,29 @@ function plausible(bed: DeclaredBed): boolean {
  * and one with no way to test it: the scene needs a GPU. The check is on containment
  * rather than on a belt flag so that any other frame mismatch is caught too.
  *
- * A tolerance because a skirt or a brim legitimately prints outside the declared bed on
- * plenty of profiles, and a print one millimetre over the edge is still worth a grid.
+ * Two tolerances, because the axes are not alike. Sideways, a skirt or a brim prints
+ * outside the declared bed on plenty of profiles, and a print a few millimetres over the
+ * edge is still worth a grid. Downwards, nothing prints below the bed at all, so more
+ * than a Z-offset's worth under it says the file is measuring from somewhere else. One
+ * 25 mm tolerance on every axis would have kept the grid for a short belt print sitting
+ * at Z -10; the fixture only fails it because it happens to sit at Z -990.
+ *
+ * Height is not checked. Exceeding the declared height is not a change of coordinate
+ * frame, just a print taller than the box - which is routine, because an unrecognised
+ * printer gets a 256 mm guess and plenty of real machines are taller. The bed outline is
+ * still where the bed is.
  */
 const OUTSIDE_TOLERANCE_MM = 25;
+const BELOW_BED_TOLERANCE_MM = 2;
 
-export function volumeFor(printer: Printer, bounds: Bounds | undefined): Volume | undefined {
-  if (!bounds) return printer.volume;
-  const { x, y, z, originX, originY } = printer.volume;
+export function volumeFor(printer: Printer, bounds: Bounds): Volume | undefined {
+  const { x, y, originX, originY } = printer.volume;
   const within =
     bounds.min[0] >= originX - OUTSIDE_TOLERANCE_MM &&
     bounds.max[0] <= originX + x + OUTSIDE_TOLERANCE_MM &&
     bounds.min[1] >= originY - OUTSIDE_TOLERANCE_MM &&
     bounds.max[1] <= originY + y + OUTSIDE_TOLERANCE_MM &&
-    bounds.min[2] >= -OUTSIDE_TOLERANCE_MM &&
-    bounds.max[2] <= z + OUTSIDE_TOLERANCE_MM;
+    bounds.min[2] >= -BELOW_BED_TOLERANCE_MM;
   return within ? printer.volume : undefined;
 }
 

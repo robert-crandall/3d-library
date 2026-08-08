@@ -314,29 +314,85 @@ describe('positioning', () => {
     ]);
   });
 
-  it('makes E relative under G91 even with no M83', () => {
-    // Marlin's G91 sets every axis bit including E, so Cura's end block retracts and
-    // unretracts with bare E deltas and no M83. Reading those as absolute against an
-    // E that has climbed all print turns the pair into one huge deposit.
+  it('keeps M83 across a G91 Z-hop and back', () => {
+    // A relative Z-hop inside a print is ordinary - Klipper macros and custom
+    // `before_layer_gcode` both emit one. Klipper keeps XYZ and E modes separate, and
+    // Marlin's `axis_is_relative` consults its `M82`/`M83` bits before the `G90`/`G91`
+    // one, so the M83 here survives both. Letting G90 clear it read the last `E1` as an
+    // absolute move down from 5 - a retraction - and every extrusion after a mid-print
+    // hop rendered as travel.
     const parsed = parse(
-      ['G90', 'M82', 'G1 X10 Y10 Z0.2', 'G92 E0', 'G1 X20 E5', 'G91', 'G1 X5 E1'].join('\n'),
+      [
+        'G90',
+        'M83',
+        'G1 X10 Y10 Z0.2',
+        'G1 X20 E5',
+        'G91',
+        'G1 Z1',
+        'G1 Z-1',
+        'G90',
+        'G1 X30 E1',
+      ].join('\n'),
     );
-    // E1 relative is a real 1 mm deposit. Read as absolute it would be 1 - 5, a
-    // retraction, and the segment would vanish into travel.
     expect(rounded(parsed.extrusion)).toEqual([
       [10, 10, 0.2, 20, 10, 0.2],
-      [20, 10, 0.2, 25, 10, 0.2],
+      [20, 10, 0.2, 30, 10, 0.2],
     ]);
   });
 
-  it('lets G90 clear an M83 set earlier', () => {
-    // The same bit-setting cuts the other way: G90 resets E to absolute, which is why
-    // slicers re-emit M83 after one. Keeping M83 across the G90 would read the bare E1
-    // as another relative millimetre instead of a retraction back to 1.
-    const parsed = parse(
-      ['G90', 'M83', 'G1 X10 Y10 Z0.2', 'G1 X20 E5', 'G90', 'G1 X30 E1'].join('\n'),
-    );
+  it('leaves E absolute when the file never says otherwise', () => {
+    // No slicer omits the declaration, but Marlin powers on absolute, so that is what a
+    // file without an M82 or M83 means. Defaulting to relative would read the whole
+    // print as one climbing deposit.
+    const parsed = parse(['G90', 'G1 X10 Y10 Z0.2', 'G1 X20 E5', 'G1 X30 E5'].join('\n'));
+    // The second E5 is the same absolute position: no filament, so no road.
     expect(rounded(parsed.extrusion)).toEqual([[10, 10, 0.2, 20, 10, 0.2]]);
+  });
+
+  it('treats a round-bracket comment as a comment, not as words', () => {
+    // RepRap and Marlin both document `(...)`, and post-processors emit it. Read as
+    // G-code the prose inside sets axes from its own letters: `(move to Y99)` put Y at
+    // 99 and left an E with no value, which threw and failed the whole file. A bracket
+    // between two words has to be skipped in place, not treated as end-of-line.
+    const parsed = parse(
+      [
+        'G21',
+        'G90',
+        'M83',
+        'G1 X0 Y0 Z0.2',
+        'G1 X10 E1 (move to Y99)',
+        'G1 (rapid) X20 E1',
+        'G1 X30 E1 (unclosed comment',
+      ].join('\n'),
+    );
+    expect(rounded(parsed.extrusion)).toEqual([
+      [0, 0, 0.2, 10, 0, 0.2],
+      [10, 0, 0.2, 20, 0, 0.2],
+      [20, 0, 0.2, 30, 0, 0.2],
+    ]);
+  });
+
+  it('forgets where the nozzle is when the file homes', () => {
+    // G28 moves to the endstop, a position the file never states. Drawing the next move
+    // from the pre-home point puts a travel line across the plate that the machine never
+    // made - here a diagonal from the end of the print back to X5.
+    const parsed = parse(
+      [
+        'G21',
+        'G90',
+        'M83',
+        'G1 X0 Y0 Z0.2',
+        'G1 X50 Y50 E1',
+        'G28 X',
+        'G1 X5 Y50',
+        'G1 X9 Y50 E1',
+      ].join('\n'),
+    );
+    expect(rounded(parsed.travel)).toEqual([]);
+    expect(rounded(parsed.extrusion)).toEqual([
+      [0, 0, 0.2, 50, 50, 0.2],
+      [5, 50, 0.2, 9, 50, 0.2],
+    ]);
   });
 
   it('does not take a bare G92 E0 as a statement about XY', () => {

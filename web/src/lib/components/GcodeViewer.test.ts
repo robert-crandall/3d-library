@@ -316,6 +316,42 @@ describe('GcodeViewer', () => {
   });
 
   it('shows a determinate bar when the response declares a length', async () => {
+    // Held open after the first of two chunks so the bar can be read mid-download. The
+    // earlier version of this test only checked the bar before the response resolved and
+    // then waited for it to disappear, which passes just as well with no `value` at all.
+    const bytes = new TextEncoder().encode(PRINT);
+    const half = Math.floor(bytes.byteLength / 2);
+    let sendRest: () => void = () => {};
+    const headers = new Headers();
+    headers.set('content-length', String(bytes.byteLength));
+    fetchMock.mockResolvedValue({
+      ok: true,
+      headers,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes.slice(0, half));
+          sendRest = () => {
+            controller.enqueue(bytes.slice(half));
+            controller.close();
+          };
+        },
+      }),
+    });
+    render(GcodeViewer, { modelId: 7, file });
+
+    const bar = await screen.findByTestId('gcode-progress');
+    await waitFor(() => expect(bar.getAttribute('value')).not.toBeNull());
+    const value = Number(bar.getAttribute('value'));
+    expect(value).toBeGreaterThan(0);
+    expect(value).toBeLessThan(1);
+
+    sendRest();
+    await waitFor(() => expect(show).toHaveBeenCalled());
+  });
+
+  it('leaves the bar indeterminate when the response declares no length', async () => {
+    // Chunked transfer encoding has no content-length. Guessing a fraction from bytes
+    // read against a total of zero reported a full bar for the whole download.
     let release: (value: unknown) => void = () => {};
     fetchMock.mockReturnValue(new Promise((resolve) => (release = resolve)));
     render(GcodeViewer, { modelId: 7, file });
@@ -323,7 +359,7 @@ describe('GcodeViewer', () => {
     const bar = await screen.findByTestId('gcode-progress');
     expect(bar.getAttribute('value')).toBeNull();
 
-    release(respond(PRINT));
+    release(respond(PRINT, { length: null }));
     await waitFor(() => expect(show).toHaveBeenCalled());
   });
 

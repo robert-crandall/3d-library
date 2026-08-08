@@ -137,6 +137,7 @@ const TAB = 9;
 const MINUS = 45;
 const PLUS = 43;
 const DOT = 46;
+const OPEN_PAREN = 40;
 const ZERO = 48;
 const NINE = 57;
 const UPPER_A = 65;
@@ -473,6 +474,17 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
     for (;;) {
       if (pos >= end) return false;
       c = text.charCodeAt(pos);
+      if (c === OPEN_PAREN) {
+        // RepRap and Marlin both accept `(...)` as a comment, and unlike `;` it can sit
+        // between words rather than only ending the line. Skipping only the bracket
+        // characters read the prose inside as G-code words: `(move to Y99)` set Y to 99
+        // from the text and left an `E` with no value, which is a hard parse error - the
+        // whole file failed to render over a comment. An unclosed bracket comments out
+        // the rest of the line, which is what the firmware does with it.
+        const close = text.indexOf(')', pos + 1);
+        pos = close >= 0 && close < end ? close + 1 : end;
+        continue;
+      }
       if (isLetter(c)) break;
       pos++;
     }
@@ -515,20 +527,27 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
         arcMove(false);
         return;
       case 90:
-        // Marlin's `set_relative_mode` writes every axis bit including E, so `G90` and
-        // `G91` reset an `M82`/`M83` set earlier; a later `M82`/`M83` overrides E again.
-        // Cura's end block relies on this: it emits `G91` and then bare `E` deltas
-        // without an `M83`, so treating E as still absolute there reads a retraction and
-        // its unretract as one enormous deposit.
+        // Only `M82`/`M83` decide the extruder's mode. Klipper keeps the two settings
+        // separate outright, and Marlin's `axis_is_relative` checks its `M82`/`M83` bits
+        // before the `G90`/`G91` one, so on both firmwares a `G91` Z-hop mid-print
+        // leaves an earlier `M83` standing. Coupling them read every extrusion after
+        // such a hop as an absolute E far below the current value - a retraction - and
+        // the rest of the print rendered as travel.
         absoluteXYZ = true;
-        absoluteE = true;
         return;
       case 91:
         absoluteXYZ = false;
-        absoluteE = false;
         return;
       case 92:
         setPosition();
+        return;
+      case 28:
+        // Homing moves to a position the file never states - the endstop's, which depends
+        // on the firmware's build. Ignoring it drew the next move as a straight line from
+        // wherever the nozzle was before, a travel segment across the plate that the
+        // machine never made. Forgetting where the nozzle is instead is the same thing
+        // the parser already does at the start of a file.
+        positioned = false;
         return;
       case 17:
         return;
