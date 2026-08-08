@@ -1,13 +1,11 @@
-# The template's identity, and the only place it's written down. `make init`
-# reads these as the OLD values to replace, which is why scripts/init.sh holds
-# none of them itself: a shell script that rewrites its own text mid-run is a
-# bug, and the "no old identifier survives" check would trip on the script
-# forever. Rewriting this file mid-run is safe because make has already read it.
-APP_MODULE ?= github.com/robert-crandall/3d-library
-APP_NAME   ?= 3D Library
-APP_SLUG   ?= 3d-library
+# This app's slug, used to name the built binary and the docker-smoke resources.
+# The template's `make init` rename machinery is gone: it existed to turn the
+# template into an app, that has happened, and its test asserted no tracked path
+# or file content contains the app's own name - which docs/designs/3D
+# Library.dc.html breaks by existing.
+APP_SLUG ?= 3d-library
 
-.PHONY: help init setup build install-mcp mcp-token mcp-config run dev test check spec docker-smoke clean
+.PHONY: help setup build install-mcp mcp-token mcp-config run dev test check spec docker-smoke clean
 
 # So a frontend build that fails halfway doesn't leave an index.html behind that
 # makes the target below look satisfied.
@@ -16,8 +14,6 @@ APP_SLUG   ?= 3d-library
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-8s\033[0m %s\n", $$1, $$2}'
-init: ## Rename this template: make init [MODULE=github.com/you/thing] [NAME=Thing]
-	@scripts/init.sh "$(APP_MODULE)" "$(APP_NAME)" "$(APP_SLUG)"
 
 setup: ## First run after cloning: deps, upload dir, .env, and a frontend build
 	cd web && bun install --frozen-lockfile

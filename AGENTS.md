@@ -144,12 +144,8 @@ These are the things that waste an hour.
 - **Render conditional markup only when it is needed.** Keeping closed or
   collapsed UI in the DOM makes component assertions ambiguous and adds
   accessibility noise.
-- **`make init` rewrites every tracked text file** except `docs/tech-stack.md`
-  and `scripts/init.sh`, then fails if the old identity survives anywhere. New
-  docs that name the app are handled automatically; just never hardcode the slug
-  into `scripts/init.sh`.
 - `make docker-smoke` needs Docker and takes minutes. It is deliberately not in
-  CI. Do not run it as routine validation.
+  CI. Run it when you touch the Dockerfile, the healthcheck, or the upload wiring.
 
 ## Pull requests
 

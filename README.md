@@ -24,29 +24,11 @@ and [`AGENTS.md`](AGENTS.md) for the working commands, conventions, and gotchas
 
 ## Getting started
 
-Click **Use this template**, clone your copy, then:
-
 ```sh
-make init     # rename the template to your app
+git clone https://github.com/robert-crandall/3d-library
+cd 3d-library
 make setup    # deps, ./uploads, .env, and a first frontend build
 ```
-
-`make init` reads your `origin` remote, so a bare `make init` usually does the
-right thing. Override either half if not:
-
-```sh
-make init MODULE=github.com/you/thing NAME=Thing
-```
-
-It rewrites the Go module path, the app title, and the binary name across
-tracked text in one pass, then prints the leftover-scan result. The one exception
-is `docs/tech-stack.md`: that ADR records this source template's identity on
-purpose. Every other tracked text file is still scanned, and a leftover fails
-the rename. (If your new name contains one of the old identifiers - `thing`
-inside `3d-library-thing`, say - it reports that identifier as unchecked,
-because there's no way to distinguish a leftover from your own name.) Run it
-before you write any code: it's a blanket find-and-replace, and it's much less
-interesting when there's only a template underneath it.
 
 Edit `.env` (at minimum `DATABASE_URL`), create that database, then:
 
@@ -122,11 +104,9 @@ this file; the file takes precedence over a local `.env`. The config path is
 `$XDG_CONFIG_HOME/<app>.json` when `XDG_CONFIG_HOME` is set, and
 `~/.config/<app>.json` otherwise.
 
-The main module's basename controls the MCP handshake name, installed binary,
-and config filename together. `make init` changes all three, which is why it
-belongs before MCP setup. If you rename after configuring MCP, move the config
-to the new `<app>.json`, rerun `make install-mcp`, and remove the old binary;
-init never edits files under your home directory.
+The main module's basename controls the MCP handshake name, installed binary, and
+config filename together. If you ever rename the module, move the config to the
+new `<app>.json`, rerun `make install-mcp`, and remove the old binary.
 
 With the app running and the token valid, the shell mode proves the harness is
 live:
