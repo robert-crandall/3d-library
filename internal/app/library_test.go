@@ -1107,10 +1107,15 @@ func TestAbandonedUploadCommitsNothing(t *testing.T) {
 
 // edits is the whole PUT body. Every field is required, because the update
 // replaces the editable metadata rather than patching it.
+// edits builds the plain-text half of an update body. Milestone 7 made the
+// taxonomy fields required, so this fills them with "no category, no tags, no
+// materials" - which is what every model these tests build already has, so the
+// bodies stay about the field under test.
 func edits(name, description, printTips, sourceURL string) string {
-	body, err := json.Marshal(map[string]string{
+	body, err := json.Marshal(map[string]any{
 		"name": name, "description": description,
 		"printTips": printTips, "sourceUrl": sourceURL,
+		"categoryId": nil, "tagIds": []int64{}, "materialIds": []int64{},
 	})
 	if err != nil {
 		panic(err)
@@ -1661,7 +1666,7 @@ func TestUnexpectedFailuresDoNotLeakInternals(t *testing.T) {
 	// name reaches it - huma's `required` means present, not non-empty, so this
 	// is the service's own refusal and not schema validation.
 	resp, out = c.send(http.MethodPut, fmt.Sprintf("/api/models/%d", model.ID),
-		`{"name":"   ","description":"","printTips":"","sourceUrl":""}`)
+		edits("   ", "", "", ""))
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("update: got %d: %s", resp.StatusCode, out)
 	}
