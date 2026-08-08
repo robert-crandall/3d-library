@@ -261,6 +261,59 @@ describe('uploadModel', () => {
     expect(failed).toEqual([]);
   });
 
+  // The count derived locally is a lower bound, not the truth: a file whose
+  // request failed uncertainly may have landed anyway. Here that lower bound
+  // coincidentally equals the stale create count, so a comparison alone would
+  // wave it through and claim a two-file model has one file.
+  it('does not trust a count that only matches because a file failed uncertainly', async () => {
+    let posts = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!init) throw new TypeError('Failed to fetch');
+        posts += 1;
+        if (posts === 1) {
+          return { ok: true, json: async () => ({ id: 9, name: 'Both', fileCount: 1 }) } as never;
+        }
+        throw new TypeError('Failed to fetch');
+      })
+    );
+
+    await expect(
+      uploadModel('Both', [file('a.stl'), file('b.stl')], () => {})
+    ).rejects.toMatchObject({ certain: false });
+  });
+
+  // The other side: a 4xx is decided before anything is written, so that file
+  // really is absent and the stale count really is right. Treating every failure
+  // as unconfirmed would turn an ordinary rejected file into a dead end.
+  it('keeps the create response when the only later failure was a refusal', async () => {
+    let posts = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!init) return { ok: false, status: 503 } as never;
+        posts += 1;
+        if (posts === 1) {
+          return { ok: true, json: async () => ({ id: 9, name: 'Both', fileCount: 1 }) } as never;
+        }
+        return {
+          ok: false,
+          status: 415,
+          json: async () => ({ detail: 'that is not a model file' })
+        } as never;
+      })
+    );
+
+    const { model, failed } = await uploadModel(
+      'Both',
+      [file('a.stl'), file('b.stl')],
+      () => {}
+    );
+    expect(model.fileCount).toBe(1);
+    expect(failed).toEqual(['b.stl']);
+  });
+
   // A 201 whose body never arrives is the nastiest case in the whole flow: the
   // model exists, but we do not know its id, so it cannot be shown and cannot
   // be reported as created. What it must not be is retryable.

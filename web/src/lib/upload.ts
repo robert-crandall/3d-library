@@ -82,6 +82,11 @@ export async function uploadModel(
 
   let model: Model | undefined;
   const failed: string[] = [];
+  // Whether any file after the first failed in a way that does not prove it was
+  // not written. Those files are on `failed`, but they may be sitting on the
+  // server anyway, so `files.length - failed.length` is only a lower bound on
+  // what landed - and a lower bound is not a number to show anyone.
+  let unconfirmed = false;
 
   for (const [index, file] of files.entries()) {
     onState(index, 'uploading');
@@ -101,6 +106,7 @@ export async function uploadModel(
       onState(index, 'failed', message);
       if (!model) throw new UploadFailed(`${message} The model may still have been created.`, false);
       failed.push(file.name);
+      unconfirmed = true;
       continue;
     }
 
@@ -115,6 +121,9 @@ export async function uploadModel(
         );
       }
       failed.push(file.name);
+      // A 4xx was decided before anything was written, so that file really is
+      // absent. A 5xx says nothing either way.
+      if (response.status >= 500) unconfirmed = true;
       continue;
     }
 
@@ -152,14 +161,16 @@ export async function uploadModel(
 
   if (refreshed) {
     model = refreshed;
-  } else if (model.fileCount !== files.length - failed.length) {
+  } else if (unconfirmed || model.fileCount !== files.length - failed.length) {
     // The re-read is the only thing that knows how many files the model ended
-    // up with - the create response predates every file after the first. When
-    // its count happens to match what we watched land (a single-file upload, or
-    // one where everything after the first failed) it is still true and we keep
-    // it. Otherwise showing it would tell the user files are missing when they
-    // are not, and the obvious response to that is to upload the model again -
-    // which this milestone cannot undo. So report it as unresolved instead.
+    // up with - the create response predates every file after the first, and
+    // any file that failed uncertainly may have landed regardless. When neither
+    // of those applies the create response is still true and we keep it: a
+    // single-file upload, or one where everything after the first was refused
+    // outright. Otherwise showing its count would tell the user files are
+    // missing when they are not, and the obvious response to that is to upload
+    // the model again - which this milestone cannot undo. So report it as
+    // unresolved instead.
     throw new UploadFailed(
       'The files uploaded, but the library could not be read back. The model was created.',
       false

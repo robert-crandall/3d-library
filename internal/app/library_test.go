@@ -960,6 +960,10 @@ func TestAbandonedUploadCommitsNothing(t *testing.T) {
 	pr, pw := io.Pipe()
 	form := multipart.NewWriter(pw)
 	ctx, abandon := context.WithCancel(context.Background())
+	// Also on the failure paths below: if the staging poll times out, both
+	// goroutines are still parked on the pipe, and the temp dir cleanup would
+	// wait for them.
+	defer abandon()
 
 	go func() {
 		part, err := form.CreateFormFile("file", "half.stl")
