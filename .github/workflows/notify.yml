@@ -1,0 +1,76 @@
+name: Notify
+
+# Slack, and only when main is actually broken. Criterion 4 of issue #8 is as
+# much about silence as about noise: a pull request must page nobody.
+#
+# Same structural problem as publish.yml - `workflow_run` reads its trigger
+# configuration from the copy of this file on the default branch, so this
+# workflow cannot fire from the pull request that adds it. The entire decision
+# therefore lives in scripts/ci/notify-decision.sh, table-tested over 22 cases
+# by internal/cicd, and this file only does the posting.
+#
+# No `branches:` filter, unlike publish.yml. A version-tag Publish run has the
+# tag as its head_branch, so a `[main]` filter would silently drop exactly the
+# failures worth hearing about. The cost is a Notify run per pull-request CI
+# completion that decides "no" in about two seconds.
+
+on:
+  workflow_run:
+    workflows: ["CI", "Publish"]
+    types: [completed]
+
+jobs:
+  slack:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Decide whether this is worth waking someone for
+        id: decide
+        env:
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          # pipefail, because the default `run:` shell is `bash -e`, not
+          # `bash -eo pipefail`: without it a script that dies mid-way still
+          # exits 0 through `tee`, and a failed decision reads as "no".
+          set -eo pipefail
+          scripts/ci/notify-decision.sh | tee -a "$GITHUB_OUTPUT"
+
+      - name: Post to Slack
+        if: steps.decide.outputs.notify == 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -eo pipefail
+          # Criterion 5: a fork of this template with no secrets set must still
+          # go green. Checked in-shell rather than with a step-level `if:`, so
+          # the reason shows up in the log instead of as a grey step.
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL is unset - would have reported $WORKFLOW_NAME/$CONCLUSION on $BRANCH."
+            exit 0
+          fi
+          # jq builds the payload rather than a heredoc: a branch name is
+          # attacker-influenced text, and a quote or a newline in one would
+          # otherwise produce invalid JSON - which fails as a confusing Slack
+          # error rather than as anything that points at the cause.
+          jq -n \
+            --arg repo "$REPOSITORY" \
+            --arg wf "$WORKFLOW_NAME" \
+            --arg concl "$CONCLUSION" \
+            --arg branch "$BRANCH" \
+            --arg url "$RUN_URL" \
+            '{text: "\($repo): \($wf) \($concl) on \($branch)\n\($url)"}' \
+          | curl -fsS -X POST --max-time 10 -H 'Content-Type: application/json' -d @- "$SLACK_WEBHOOK_URL"
+
+# No third-party Slack action here on purpose: a curl and a jq have nothing to
+# keep pinned, nothing to review on upgrade, and no supply-chain surface in a
+# job that holds a webhook secret.

@@ -1,0 +1,19 @@
+# Keeping web/build out is load-bearing, not just a size win: the Dockerfile
+# copies the SPA from its own build stage, so excluding the local one guarantees
+# the embedded frontend is the one this build produced.
+web/build/
+web/.svelte-kit/
+web/node_modules/
+web/test-results/
+
+bin/
+.bin/
+
+# Never bake a developer's local secrets or uploads into an image.
+.env
+uploads/
+
+.git/
+.github/
+docs/
+*.md

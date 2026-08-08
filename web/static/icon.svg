@@ -1,0 +1,25 @@
+<!--
+  The app icon, as distinct from favicon.svg: full-bleed rather than rounded, so
+  it works as a maskable icon. Android crops a maskable icon to whatever shape
+  the launcher uses, which means two things - the background has to reach every
+  edge (a rounded rect would show its corners clipped into an odd blob), and the
+  glyph has to stay inside the "safe zone", the centred circle covering the inner
+  80%. The house's furthest point sits at 33% of the canvas from the centre, so
+  it clears that with room to spare.
+
+  Regenerate the PNGs after editing this file:
+
+    cd web/static
+    rsvg-convert -w 192 -h 192 icon.svg -o icon-192.png
+    rsvg-convert -w 512 -h 512 icon.svg -o icon-512.png
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <rect width="32" height="32" fill="#1e293b" />
+  <!-- The favicon's house, at 90% so it sits comfortably inside the safe zone. -->
+  <g transform="translate(1.6 1.6) scale(0.9)">
+    <path
+      d="M16 7 5.5 15.2h2.8V25h5.3v-6h4.8v6h5.3v-9.8h2.8z"
+      fill="#38bdf8"
+    />
+  </g>
+</svg>

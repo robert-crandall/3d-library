@@ -1,0 +1,9 @@
+/* Tailwind, and deliberately nothing on top of it.
+
+   No component library, no theme system, no design tokens - a fork picks its
+   own, and anything here would be a look it has to remove first. Tailwind's
+   preflight is on, as it is by default, so form controls start with no border
+   and a transparent background: the login form carries the handful of
+   structural classes that makes it usable, and they are palette-free on
+   purpose. See D5 in docs/tech-stack.md. */
+@import 'tailwindcss';

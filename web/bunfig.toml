@@ -1,0 +1,14 @@
+# Run the frontend toolchain under Bun's runtime, always.
+#
+# `bun run` normally respects the `#!/usr/bin/env node` shebang that vite,
+# svelte-kit, and svelte-check all carry, so it hands them to Node when Node
+# happens to be installed. Bun only aliases `node` to itself automatically when
+# `node` is *absent* from $PATH. Left at the default, that means `bun run build`
+# builds under Node on a machine with Node - my laptop, and every GitHub runner,
+# which ships Node preinstalled - and under Bun on a clean clone that has only
+# Bun and Go. Two runtimes for one command, picked by an invisible property of
+# the host, with CI exercising the one the template does not require.
+#
+# So: one runtime everywhere, and it's the one a fresh clone gets.
+[run]
+bun = true
