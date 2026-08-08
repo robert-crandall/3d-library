@@ -406,7 +406,6 @@ export interface components {
             minXMm: number;
             /** Format: double */
             minYMm: number;
-            rectangular: boolean;
         };
         CreateTokenInputBody: {
             /**

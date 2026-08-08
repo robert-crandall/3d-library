@@ -93,9 +93,6 @@
           "minYMm": {
             "format": "double",
             "type": "number"
-          },
-          "rectangular": {
-            "type": "boolean"
           }
         },
         "required": [
@@ -103,8 +100,7 @@
           "minYMm",
           "maxXMm",
           "maxYMm",
-          "heightMm",
-          "rectangular"
+          "heightMm"
         ],
         "type": "object"
       },

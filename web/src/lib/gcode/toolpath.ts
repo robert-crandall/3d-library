@@ -475,10 +475,17 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
         arcMove(false);
         return;
       case 90:
+        // Marlin's `set_relative_mode` writes every axis bit including E, so `G90` and
+        // `G91` reset an `M82`/`M83` set earlier; a later `M82`/`M83` overrides E again.
+        // Cura's end block relies on this: it emits `G91` and then bare `E` deltas
+        // without an `M83`, so treating E as still absolute there reads a retraction and
+        // its unretract as one enormous deposit.
         absoluteXYZ = true;
+        absoluteE = true;
         return;
       case 91:
         absoluteXYZ = false;
+        absoluteE = false;
         return;
       case 92:
         setPosition();
@@ -636,8 +643,10 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
 
   function setPosition(): void {
     // `G92` states outright where the nozzle is, which is the other way a file can
-    // establish a position it never homed to.
-    positioned = true;
+    // establish a position it never homed to. Only an axis word does that, though:
+    // Cura opens every file with a bare `G92 E0`, which says nothing about XY, and
+    // taking it as a position drew a travel line from the origin to the first move.
+    if (hasX || hasY || hasZ) positioned = true;
     if (hasX) {
       if (!Number.isFinite(valX)) throw new Error(NOT_A_NUMBER);
       offsetX = px - valX;
@@ -688,7 +697,7 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
       // than left to split the next one.
       if (pending) {
         pending = false;
-        anchored = true;
+        anchor();
       }
       return;
     }
@@ -697,7 +706,7 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
       if (!anchored && Math.abs(z - openPhysicalZ) < Z_EPSILON) {
         // The first marker of the file, arriving over a run already at this Z: a purge
         // line, which belongs to layer one rather than to a layer of its own.
-        anchored = true;
+        anchor();
         purgeSegments = extrusionSegments;
         if (announcedZ !== null) {
           openLayer.z = announcedZ;
@@ -706,7 +715,7 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
         return;
       }
       if (!anchored) {
-        anchored = true;
+        anchor();
         purgeSegments = extrusionSegments;
       }
       closeLayer();
@@ -719,6 +728,19 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
       closeLayer();
       startLayer(z);
     }
+  }
+
+  /**
+   * The first layer marker is the only evidence a file gives that the purge line is
+   * over, so bounds accumulated before it are thrown away rather than never collected.
+   * Collecting them is what makes a file with no markers at all measurable: it splits
+   * layers on Z instead, never anchors, and gating the widen on `anchored` reported
+   * every such print as 0 x 0 x 0 mm.
+   */
+  function anchor(): void {
+    anchored = true;
+    min[0] = min[1] = min[2] = Infinity;
+    max[0] = max[1] = max[2] = -Infinity;
   }
 
   function startLayer(z: number): void {
@@ -766,7 +788,7 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
     // Travel is left out because it is where the nozzle went, not where the print is -
     // a wipe to the back of the bed would report the bed's depth as the model's. Purge
     // is left out for the same reason: PrusaSlicer's runs the full width of the plate.
-    if (extruding && anchored) widen(x0, y0, z0, x1, y1, z1);
+    if (extruding) widen(x0, y0, z0, x1, y1, z1);
   }
 
   function widen(

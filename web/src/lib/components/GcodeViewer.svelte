@@ -10,12 +10,15 @@
 
     The file is read as a stream rather than downloaded whole: several hundred megabytes
     is an ordinary size for G-code, and holding all of it as text before parsing a line
-    of it doubles the peak for no gain. `loadToolpath` owns that, and the parser owns the
-    only real limit, which is segments rather than bytes.
+    of it doubles the peak for no gain. `loadToolpath` owns that. There are two limits:
+    a byte cap here, refused before the request so an unreadable file does not cost a
+    download first, and the parser's segment cap, which is the one that matches what
+    memory is actually spent on.
   */
   import { onMount, untrack } from 'svelte';
   import { formatDimensions, sizeOf } from '$lib/viewer/framing';
-  import { loadToolpath } from '$lib/gcode/load';
+  import { MAX_GCODE_BYTES, loadToolpath } from '$lib/gcode/load';
+  import { formatBytes } from '$lib/format';
   import { formatPrinter, resolvePrinter, toolpathColor } from '$lib/gcode/printer';
   import type { Toolpath } from '$lib/gcode/toolpath';
   import type { GcodeViewer } from '$lib/gcode/scene';
@@ -23,7 +26,7 @@
 
   let { modelId, file }: { modelId: number; file: ModelFile } = $props();
 
-  type Status = 'loading' | 'ready' | 'failed';
+  type Status = 'too-large' | 'loading' | 'ready' | 'failed';
   let status = $state<Status>('loading');
   let error = $state('');
   // Undefined while the response declares no length, which is what a chunked response
@@ -76,6 +79,9 @@
         if (cancelled) return;
         viewerBroken = true;
         pending = undefined;
+        // Nothing will draw the result, so stop paying for it. Without this a failed
+        // renderer still streamed and parsed the whole file behind the error message.
+        inFlight?.abort();
         if (status !== 'failed') {
           status = 'failed';
           error = NO_VIEWER;
@@ -102,6 +108,27 @@
   async function load(current: ModelFile) {
     inFlight?.abort();
     const mine = ++generation;
+
+    if (viewerBroken) {
+      // Checked before the fetch as well as after it: once the renderer is gone, every
+      // later file in the strip would otherwise download in full to reach the same
+      // sentence.
+      status = 'failed';
+      error = NO_VIEWER;
+      toolpath = undefined;
+      return;
+    }
+
+    if (current.size > MAX_GCODE_BYTES) {
+      // Refused before the request, not after: the point is not to download it. The
+      // parser's segment cap cannot do this - it needs the bytes to count them.
+      status = 'too-large';
+      error = `This file is ${formatBytes(current.size)}. G-code over ${formatBytes(
+        MAX_GCODE_BYTES,
+      )} is too large to preview - download it to open in a slicer.`;
+      toolpath = undefined;
+      return;
+    }
 
     status = 'loading';
     error = '';

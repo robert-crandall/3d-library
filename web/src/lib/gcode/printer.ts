@@ -12,6 +12,13 @@ export type Volume = {
   readonly x: number;
   readonly y: number;
   readonly z: number;
+  /**
+   * The bed's front-left corner in the printer's own coordinates. Usually the origin,
+   * but a delta's bed is centred on it and runs negative, and drawing that bed from 0
+   * puts the print in a corner of a box it is nowhere near.
+   */
+  readonly originX: number;
+  readonly originY: number;
 };
 
 export type PrinterMeta = {
@@ -22,13 +29,6 @@ export type PrinterMeta = {
     readonly maxXMm: number;
     readonly maxYMm: number;
     readonly heightMm: number;
-    /**
-     * Deliberately unused. A delta's round bed is drawn as the rectangle that bounds it,
-     * which overstates the corners; no printer in the fixture set has one, so there is
-     * nothing to check a circle against. Left in the type so the next person can see the
-     * server already reports it.
-     */
-    readonly rectangular?: boolean;
   };
   readonly filamentColor?: string;
 };
@@ -45,7 +45,7 @@ export type Printer = {
  * A 220 mm cube: an i3-class bed, the most common size there is. Used only when a file
  * says nothing about its printer, and reported as unknown rather than as a detection.
  */
-export const DEFAULT_VOLUME: Volume = { x: 220, y: 220, z: 220 };
+export const DEFAULT_VOLUME: Volume = { x: 220, y: 220, z: 220, originX: 0, originY: 0 };
 
 /**
  * Build volumes for printers whose slicer names the model but never writes a bed shape.
@@ -60,13 +60,14 @@ export const DEFAULT_VOLUME: Volume = { x: 220, y: 220, z: 220 };
  * one thing acceptance criterion 4 rules out: inventing a build volume rather than
  * admitting the printer is unknown.
  */
-const VOLUMES: ReadonlyArray<readonly [pattern: RegExp, volume: Volume]> = [
-  // The mini is the only Bambu that is not a 256 cube, so it has to be matched first.
-  [/\ba1\s*mini\b/, { x: 180, y: 180, z: 180 }],
-  // One trailing letter, because the range is X1, X1C, X1E, P1P, P1S and A1: a plain
-  // word boundary after `p1` does not match `P1S`.
-  [/\b(x1|p1|a1)[a-z]?\b/, { x: 256, y: 256, z: 256 }],
-];
+const VOLUMES: ReadonlyArray<readonly [pattern: RegExp, size: Omit<Volume, 'originX' | 'originY'>]> =
+  [
+    // The mini is the only Bambu that is not a 256 cube, so it has to be matched first.
+    [/\ba1\s*mini\b/, { x: 180, y: 180, z: 180 }],
+    // One trailing letter, because the range is X1, X1C, X1E, P1P, P1S and A1: a plain
+    // word boundary after `p1` does not match `P1S`.
+    [/\b(x1|p1|a1)[a-z]?\b/, { x: 256, y: 256, z: 256 }],
+  ];
 
 /** What grid to draw, and what to say about it. */
 export function resolvePrinter(meta: PrinterMeta | undefined): Printer {
@@ -83,6 +84,8 @@ export function resolvePrinter(meta: PrinterMeta | undefined): Printer {
         x: declared.maxXMm - declared.minXMm,
         y: declared.maxYMm - declared.minYMm,
         z: declared.heightMm,
+        originX: declared.minXMm,
+        originY: declared.minYMm,
       },
       model,
       known: true,
@@ -91,8 +94,12 @@ export function resolvePrinter(meta: PrinterMeta | undefined): Printer {
 
   if (model) {
     const needle = model.toLowerCase();
-    for (const [pattern, volume] of VOLUMES) {
-      if (pattern.test(needle)) return { volume, model, known: true };
+    for (const [pattern, size] of VOLUMES) {
+      // Every printer in the table is a cartesian bed cornered at the origin; the ones
+      // that are not declare their own bed shape and never reach here.
+      if (pattern.test(needle)) {
+        return { volume: { ...size, originX: 0, originY: 0 }, model, known: true };
+      }
     }
   }
 

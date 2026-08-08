@@ -12,13 +12,26 @@ import { createToolpathParser, type Toolpath } from './toolpath';
   tested against a fake response, which is where their bugs are - a stalled progress bar
   and a cancelled load that paints anyway both look fine in a canvas.
 
-  There is deliberately no size cap here, unlike the mesh viewer's. The upload limit is
-  500 MB, so a byte cap below it would refuse files this app accepted and one at or above
-  it could never fire. What actually costs memory is segments, not bytes - a dense 40 MB
-  file is a bigger problem than a sparse 400 MB one - so the refusal lives on
-  `SEGMENT_CAP` in the parser, and the panel shows progress until it either draws or says
-  the file is too detailed.
+  There are two caps and they cover different things. `SEGMENT_CAP` in the parser is the
+  one that matches what actually costs memory - a dense 40 MB file is a bigger problem
+  than a sparse 400 MB one - but it can only fire once the whole file has arrived and
+  been read. `MAX_GCODE_BYTES` is checked against the size the API already reported, so a
+  file too big to be worth trying is refused before a byte of it is fetched rather than
+  after a quarter-gigabyte download that ends in "too detailed".
 */
+
+/**
+ * The largest G-code file the viewer will fetch.
+ *
+ * Real slicer output runs 33-37k segments per megabyte, so `SEGMENT_CAP` bites at around
+ * 230 MB of it: this sits just above that, which is what keeps the two caps from being
+ * the same cap twice. A denser file than that is stopped by segments after parsing; a
+ * sparser one - mostly comments, or a hand-written file - is stopped here before the
+ * download. It is well under the 500 MB upload limit on purpose, because being able to
+ * store a file has never meant a browser can draw it; the mesh viewer draws the same
+ * distinction with `MAX_PREVIEW_BYTES`.
+ */
+export const MAX_GCODE_BYTES = 256 * 1024 * 1024;
 
 export type LoadOptions = {
   readonly signal?: AbortSignal;

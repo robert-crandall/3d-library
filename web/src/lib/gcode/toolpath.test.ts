@@ -69,6 +69,10 @@ describe('layer detection', () => {
     // out of the camera fit.
     expect(parsed.extrusionSegments).toBe(2);
     expect(parsed.purgeSegments).toBe(1);
+    // Bounds start at the first post-purge extrusion, so the purge line running out to
+    // X100 at Y0 does not stretch them. Asserting the segment counts alone let a version
+    // that drew the right layers and framed the camera around the purge pass.
+    expect(parsed.bounds).toEqual({ min: [10, 0, 0.2], max: [100, 10, 0.2] });
   });
 
   it('does not absorb a real preceding layer, which is at a different Z', () => {
@@ -195,15 +199,67 @@ describe('layer detection', () => {
 describe('positioning', () => {
   it('follows G91 relative moves and returns to absolute on G90', () => {
     const parsed = parse(
-      ['G90', 'M83', 'G1 X10 Y10 Z0.2', 'G91', 'G1 X5 E1', 'G1 X5 E1', 'G90', 'G1 X30 E1'].join(
-        '\n',
-      ),
+      [
+        'G90',
+        'M83',
+        'G1 X10 Y10 Z0.2',
+        'G91',
+        'G1 X5 E1',
+        'G1 X5 E1',
+        'G90',
+        'M83',
+        'G1 X30 E1',
+      ].join('\n'),
     );
     expect(rounded(parsed.extrusion)).toEqual([
       [10, 10, 0.2, 15, 10, 0.2],
       [15, 10, 0.2, 20, 10, 0.2],
       [20, 10, 0.2, 30, 10, 0.2],
     ]);
+  });
+
+  it('makes E relative under G91 even with no M83', () => {
+    // Marlin's G91 sets every axis bit including E, so Cura's end block retracts and
+    // unretracts with bare E deltas and no M83. Reading those as absolute against an
+    // E that has climbed all print turns the pair into one huge deposit.
+    const parsed = parse(
+      ['G90', 'M82', 'G1 X10 Y10 Z0.2', 'G92 E0', 'G1 X20 E5', 'G91', 'G1 X5 E1'].join('\n'),
+    );
+    // E1 relative is a real 1 mm deposit. Read as absolute it would be 1 - 5, a
+    // retraction, and the segment would vanish into travel.
+    expect(rounded(parsed.extrusion)).toEqual([
+      [10, 10, 0.2, 20, 10, 0.2],
+      [20, 10, 0.2, 25, 10, 0.2],
+    ]);
+  });
+
+  it('lets G90 clear an M83 set earlier', () => {
+    // The same bit-setting cuts the other way: G90 resets E to absolute, which is why
+    // slicers re-emit M83 after one. Keeping M83 across the G90 would read the bare E1
+    // as another relative millimetre instead of a retraction back to 1.
+    const parsed = parse(
+      ['G90', 'M83', 'G1 X10 Y10 Z0.2', 'G1 X20 E5', 'G90', 'G1 X30 E1'].join('\n'),
+    );
+    expect(rounded(parsed.extrusion)).toEqual([[10, 10, 0.2, 20, 10, 0.2]]);
+  });
+
+  it('does not take a bare G92 E0 as a statement about XY', () => {
+    // Cura and OrcaSlicer both reset the extruder before the first move. Counting that
+    // as "the nozzle is somewhere known" made the first real move a travel segment from
+    // the origin - a diagonal line across the plate that is not in the file.
+    const parsed = parse(['G90', 'M83', 'G92 E0', 'G1 X50 Y50 Z0.2', ';LAYER:0', 'G1 X60 E1'].join('\n'));
+    expect(rounded(parsed.travel)).toEqual([]);
+  });
+
+  it('measures a file that never emits a layer marker', () => {
+    // The parser falls back to splitting on Z, and that half worked: layers came out
+    // right while bounds stayed empty, so the panel reported 0 x 0 x 0 mm for a print
+    // it was drawing correctly on screen.
+    const parsed = parse(
+      ['G21', 'G90', 'M82', 'G1 X10 Y10 Z0.2 F1200', 'G1 X40 Y10 E5', 'G1 Z0.4', 'G1 X40 Y40 E10'].join('\n'),
+    );
+    expect(parsed.layers.length).toBe(2);
+    expect(parsed.bounds).toEqual({ min: [10, 10, 0.2], max: [40, 40, 0.4] });
   });
 
   it('treats G92 as renaming the current position, not as a move', () => {
@@ -666,7 +722,7 @@ describe('real slicer files', () => {
       layers: 4,
       z: [0.2, 0.4, 0.6, 0.8],
       extrusion: 907,
-      travel: 299,
+      travel: 298,
     },
     {
       // A belt printer: the toolpaths are at a machine Z near -988 while the file
@@ -685,7 +741,9 @@ describe('real slicer files', () => {
       layers: 4,
       z: [0.27, 0.37, 0.47, 0.57],
       extrusion: 786,
-      travel: 50,
+      // 49, not 50: Cura and OrcaSlicer both open with a bare `G92 E0`, and taking that
+      // as a statement about XY drew a travel line to the first move from the origin.
+      travel: 49,
     },
   ])('$file', ({ file, layers, z, extrusion, travel }) => {
     const parser = createToolpathParser();

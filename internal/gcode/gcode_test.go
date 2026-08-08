@@ -46,7 +46,7 @@ func TestParseFixtures(t *testing.T) {
 				// bed_shape is a rectangle and the colour list has five
 				// identical entries, of which line() already keeps the first.
 				BuildVolume: &BuildVolume{
-					MaxXMm: 360, MaxYMm: 360, HeightMm: 360, Rectangular: true,
+					MaxXMm: 360, MaxYMm: 360, HeightMm: 360,
 				},
 				FilamentColor: "#ff8000",
 			},
@@ -66,7 +66,7 @@ func TestParseFixtures(t *testing.T) {
 				FilamentCost: f(0.06),
 				PrinterModel: "Caribou_Duet_220", Supports: b(false),
 				BuildVolume: &BuildVolume{
-					MaxXMm: 250, MaxYMm: 210, HeightMm: 217, Rectangular: true,
+					MaxXMm: 250, MaxYMm: 210, HeightMm: 217,
 				},
 				FilamentColor: "#ff8000",
 			},
@@ -93,7 +93,7 @@ func TestParseFixtures(t *testing.T) {
 				// Orca writes printable_area *and* bed_shape with the same
 				// value; its own key is the one asked for first.
 				BuildVolume: &BuildVolume{
-					MaxXMm: 250, MaxYMm: 250, HeightMm: 250, Rectangular: true,
+					MaxXMm: 250, MaxYMm: 250, HeightMm: 250,
 				},
 				FilamentColor: "#f2754e",
 			},
@@ -117,7 +117,7 @@ func TestParseFixtures(t *testing.T) {
 				// the real key and `default_filament_colour = ""` before the
 				// real colour; exact key matching is what keeps both out.
 				BuildVolume: &BuildVolume{
-					MaxXMm: 250, MaxYMm: 2000, HeightMm: 250, Rectangular: true,
+					MaxXMm: 250, MaxYMm: 2000, HeightMm: 250,
 				},
 				FilamentColor: "#26a69a",
 			},
@@ -589,7 +589,7 @@ func TestParseBuildVolume(t *testing.T) {
 		{
 			name:  "rectangle at the origin",
 			lines: []string{"; bed_shape = 0x0,250x0,250x210,0x210", "; max_print_height = 217"},
-			want:  &BuildVolume{MaxXMm: 250, MaxYMm: 210, HeightMm: 217, Rectangular: true},
+			want:  &BuildVolume{MaxXMm: 250, MaxYMm: 210, HeightMm: 217},
 		},
 		{
 			// A Prusa Mini's bed is declared with a negative origin. Reporting
@@ -599,14 +599,14 @@ func TestParseBuildVolume(t *testing.T) {
 			lines: []string{"; bed_shape = -2x-8,178x-8,178x172,-2x172", "; max_print_height = 180"},
 			want: &BuildVolume{
 				MinXMm: -2, MinYMm: -8, MaxXMm: 178, MaxYMm: 172,
-				HeightMm: 180, Rectangular: true,
+				HeightMm: 180,
 			},
 		},
 		{
 			// The corners in a different order are still the same rectangle.
 			name:  "rectangle listed anticlockwise",
 			lines: []string{"; bed_shape = 0x210,250x210,250x0,0x0", "; max_print_height = 217"},
-			want:  &BuildVolume{MaxXMm: 250, MaxYMm: 210, HeightMm: 217, Rectangular: true},
+			want:  &BuildVolume{MaxXMm: 250, MaxYMm: 210, HeightMm: 217},
 		},
 		{
 			name: "delta circle approximation",
@@ -616,23 +616,24 @@ func TestParseBuildVolume(t *testing.T) {
 			},
 			want: &BuildVolume{
 				MinXMm: -85, MinYMm: -85, MaxXMm: 85, MaxYMm: 85,
-				HeightMm: 240, Rectangular: false,
+				HeightMm: 240,
 			},
 		},
 		{
-			// Four points that are not a rectangle: a parallelogram has two
-			// distinct X values only by accident of the count.
+			// A parallelogram, whose bounding rectangle is wider than any of
+			// its sides: the envelope has to come from the extremes, not from
+			// the first and third corner.
 			name:  "four points that are not a rectangle",
 			lines: []string{"; bed_shape = 0x0,100x0,120x100,20x100", "; max_print_height = 200"},
 			want: &BuildVolume{
 				MinXMm: 0, MinYMm: 0, MaxXMm: 120, MaxYMm: 100,
-				HeightMm: 200, Rectangular: false,
+				HeightMm: 200,
 			},
 		},
 		{
 			name:  "orca spelling wins over the slic3r one it also writes",
 			lines: []string{"; printable_area = 0x0,250x0,250x250,0x250", "; printable_height = 250", "; bed_shape = 0x0,180x0,180x180,0x180"},
-			want:  &BuildVolume{MaxXMm: 250, MaxYMm: 250, HeightMm: 250, Rectangular: true},
+			want:  &BuildVolume{MaxXMm: 250, MaxYMm: 250, HeightMm: 250},
 		},
 		{
 			// The trap orcaslicer_2.3.gcode really contains: a different key
@@ -644,7 +645,7 @@ func TestParseBuildVolume(t *testing.T) {
 				"; printable_area = 0x0,250x0,250x250,0x250",
 				"; printable_height = 250",
 			},
-			want: &BuildVolume{MaxXMm: 250, MaxYMm: 250, HeightMm: 250, Rectangular: true},
+			want: &BuildVolume{MaxXMm: 250, MaxYMm: 250, HeightMm: 250},
 		},
 		{name: "bed with no height", lines: []string{"; bed_shape = 0x0,250x0,250x210,0x210"}},
 		{name: "height with no bed", lines: []string{"; max_print_height = 217"}},

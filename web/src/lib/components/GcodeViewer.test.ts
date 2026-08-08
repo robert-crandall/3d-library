@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import GcodeViewer from './GcodeViewer.svelte';
+import { MAX_GCODE_BYTES } from '$lib/gcode/load';
 import { DEFAULT_VOLUME } from '$lib/gcode/printer';
 
 /*
@@ -163,14 +164,13 @@ describe('GcodeViewer', () => {
             maxXMm: 256,
             maxYMm: 256,
             heightMm: 256,
-            rectangular: true,
           },
         },
       },
     });
 
     await waitFor(() => expect(show).toHaveBeenCalled());
-    expect(show.mock.calls[0][1].volume).toEqual({ x: 256, y: 256, z: 256 });
+    expect(show.mock.calls[0][1].volume).toEqual({ x: 256, y: 256, z: 256, originX: 0, originY: 0 });
     expect(screen.getByTestId('gcode-readout').textContent).toMatch('Bambu Lab X1 Carbon');
   });
 
@@ -290,5 +290,33 @@ describe('GcodeViewer', () => {
 
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByTestId('gcode-readout')).not.toBeNull();
+  });
+  it('refuses an oversized file without downloading it', () => {
+    // The parser's segment cap cannot do this: it counts segments, so it needs the
+    // bytes first. A quarter-gigabyte download that ends in "too detailed" is the
+    // failure this exists to avoid, and asserting the message alone would not catch a
+    // version that fetched anyway.
+    render(GcodeViewer, {
+      modelId: 7,
+      file: { ...file, size: MAX_GCODE_BYTES + 1 },
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toContain('too large to preview');
+  });
+
+  it('does not download a file it has no renderer for', async () => {
+    // Once WebGL is gone every later file in the strip would otherwise stream in full
+    // to arrive at the same sentence.
+    viewerThrows = true;
+    const { rerender } = render(GcodeViewer, { modelId: 7, file });
+    await waitFor(() => expect(screen.getByRole('alert')).not.toBeNull());
+    const before = fetchMock.mock.calls.length;
+
+    await rerender({ modelId: 7, file: { ...file, id: 13 } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchMock.mock.calls.length).toBe(before);
+    expect(screen.getByRole('alert').textContent).toContain('could not start');
   });
 });

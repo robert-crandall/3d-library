@@ -1,3 +1,4 @@
+import { MAX_GCODE_BYTES } from '$lib/gcode/load';
 import { MAX_PREVIEW_BYTES } from '$lib/mesh/parse';
 import type { ModelFile } from '$lib/upload';
 
@@ -42,8 +43,7 @@ export function hasPreview(files: readonly ModelFile[]): boolean {
  * Size comes first, though. Opening on a file we already know we will refuse, while one
  * we could draw sits next to it in the strip, shows "too large" to someone whose model
  * previews fine. A 3MF project carrying every plate can pass the mesh cap where the STL
- * export of one part does not, which is the pair that reaches this. G-code has no size
- * cap of its own, so it is only ever skipped for being third in the order.
+ * export of one part does not, which is the pair that reaches this.
  *
  * Without any of this the default is whichever file the server lists first, which is
  * upload order wearing a disguise.
@@ -62,5 +62,8 @@ function pick(files: readonly ModelFile[]): ModelFile | undefined {
 
 /** Whether the viewer for this file would draw it rather than refuse it on size. */
 function drawable(file: ModelFile): boolean {
-  return previewKind(file.type) !== 'mesh' || file.size <= MAX_PREVIEW_BYTES;
+  const kind = previewKind(file.type);
+  if (kind === 'mesh') return file.size <= MAX_PREVIEW_BYTES;
+  if (kind === 'gcode') return file.size <= MAX_GCODE_BYTES;
+  return false;
 }

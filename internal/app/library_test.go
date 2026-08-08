@@ -1761,9 +1761,6 @@ func TestBuildVolumeSurvivesTheDatabase(t *testing.T) {
 	if vol.HeightMm != 360 {
 		t.Errorf("heightMm = %v, want 360", vol.HeightMm)
 	}
-	if !vol.Rectangular {
-		t.Error("rectangular = false on a four-corner bed")
-	}
 	// The first colour of the semicolon-separated list, lowercased, which is
 	// the form the viewer parses.
 	if meta.FilamentColor != "#ff8000" {

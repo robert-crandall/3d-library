@@ -18,7 +18,7 @@ describe('resolvePrinter', () => {
       printerModel: 'Bambu Lab X1 Carbon',
       buildVolume: { minXMm: 0, minYMm: 0, maxXMm: 300, maxYMm: 300, heightMm: 400 },
     });
-    expect(printer.volume).toEqual({ x: 300, y: 300, z: 400 });
+    expect(printer.volume).toEqual({ x: 300, y: 300, z: 400, originX: 0, originY: 0 });
     expect(printer.known).toBe(true);
   });
 
@@ -27,20 +27,20 @@ describe('resolvePrinter', () => {
     // `printer_model = Bambu Lab X1 Carbon` and no bed shape at all, which is the case
     // in this repo's own Go fixtures.
     const printer = resolvePrinter({ printerModel: 'Bambu Lab X1 Carbon' });
-    expect(printer.volume).toEqual({ x: 256, y: 256, z: 256 });
+    expect(printer.volume).toEqual({ x: 256, y: 256, z: 256, originX: 0, originY: 0 });
     expect(printer.known).toBe(true);
     expect(printer.model).toBe('Bambu Lab X1 Carbon');
   });
 
   it.each([
-    { model: 'Bambu Lab X1 Carbon', volume: { x: 256, y: 256, z: 256 } },
-    { model: 'Bambu Lab P1S', volume: { x: 256, y: 256, z: 256 } },
-    { model: 'Bambu Lab X1E', volume: { x: 256, y: 256, z: 256 } },
-    { model: 'Bambu Lab A1', volume: { x: 256, y: 256, z: 256 } },
+    { model: 'Bambu Lab X1 Carbon', volume: { x: 256, y: 256, z: 256, originX: 0, originY: 0 } },
+    { model: 'Bambu Lab P1S', volume: { x: 256, y: 256, z: 256, originX: 0, originY: 0 } },
+    { model: 'Bambu Lab X1E', volume: { x: 256, y: 256, z: 256, originX: 0, originY: 0 } },
+    { model: 'Bambu Lab A1', volume: { x: 256, y: 256, z: 256, originX: 0, originY: 0 } },
     // The one Bambu that is not a 256 cube, and its name contains `A1`, so the order
     // the table is searched in is load-bearing.
-    { model: 'Bambu Lab A1 mini', volume: { x: 180, y: 180, z: 180 } },
-    { model: 'bambu lab a1 mini', volume: { x: 180, y: 180, z: 180 } },
+    { model: 'Bambu Lab A1 mini', volume: { x: 180, y: 180, z: 180, originX: 0, originY: 0 } },
+    { model: 'bambu lab a1 mini', volume: { x: 180, y: 180, z: 180, originX: 0, originY: 0 } },
   ])('$model', ({ model, volume }) => {
     expect(resolvePrinter({ printerModel: model }).volume).toEqual(volume);
   });
@@ -155,10 +155,13 @@ describe('toolpathColor', () => {
   it('measures a bed that does not start at the origin', () => {
     // A delta's bed_shape is centred on the origin, so reading maxX as the width would
     // report half of it. The server passes the corners through for exactly this reason.
+    //
+    // The origin has to survive too, not just the extent: the scene draws the plate from
+    // it, and a 210 mm bed drawn from 0 instead of -105 is a box the print sits outside.
     const printer = resolvePrinter({
       buildVolume: { minXMm: -105, minYMm: -105, maxXMm: 105, maxYMm: 105, heightMm: 300 },
     });
-    expect(printer.volume).toEqual({ x: 210, y: 210, z: 300 });
+    expect(printer.volume).toEqual({ x: 210, y: 210, z: 300, originX: -105, originY: -105 });
   });
 
 });

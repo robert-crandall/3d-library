@@ -88,18 +88,19 @@ type Meta struct {
 //
 // The bed is a rectangle rather than a size because a printer's origin is not
 // always its bed's corner, and the viewer draws the plate where the machine
-// coordinates in the file say it is. Rectangular is false when the profile's
-// polygon is not a four-point axis-aligned rectangle - a delta's is a
-// many-sided approximation of a circle, and drawing its bounding rectangle
-// would be a plate the shape of a bed nobody owns. The numbers still describe
-// the envelope in that case, so the readout can report it.
+// coordinates in the file say it is: a delta's bed is centred on the origin and
+// runs negative, so a plate drawn from 0 would be nowhere near the print.
+//
+// A bed whose profile polygon is not a rectangle - a delta's is a many-sided
+// circle - is described by these numbers as the rectangle that bounds it, and
+// the viewer draws that. Reporting the polygon's shape as well would only be
+// worth it once something drew a circle.
 type BuildVolume struct {
-	MinXMm      float64 `json:"minXMm"`
-	MinYMm      float64 `json:"minYMm"`
-	MaxXMm      float64 `json:"maxXMm"`
-	MaxYMm      float64 `json:"maxYMm"`
-	HeightMm    float64 `json:"heightMm"`
-	Rectangular bool    `json:"rectangular"`
+	MinXMm   float64 `json:"minXMm"`
+	MinYMm   float64 `json:"minYMm"`
+	MaxXMm   float64 `json:"maxXMm"`
+	MaxYMm   float64 `json:"maxYMm"`
+	HeightMm float64 `json:"heightMm"`
 }
 
 // Parse reads the two windows and returns what it learned.
@@ -423,12 +424,11 @@ func (p *parser) buildVolume() *BuildVolume {
 	}
 
 	volume := BuildVolume{
-		MinXMm:      slices.Min(xs),
-		MinYMm:      slices.Min(ys),
-		MaxXMm:      slices.Max(xs),
-		MaxYMm:      slices.Max(ys),
-		HeightMm:    *height,
-		Rectangular: isRectangle(xs, ys),
+		MinXMm:   slices.Min(xs),
+		MinYMm:   slices.Min(ys),
+		MaxXMm:   slices.Max(xs),
+		MaxYMm:   slices.Max(ys),
+		HeightMm: *height,
 	}
 	// A bed with no area is not a bed. Nothing writes one, but a zero-size
 	// plate would draw as a dot at the origin rather than as nothing.
@@ -436,27 +436,6 @@ func (p *parser) buildVolume() *BuildVolume {
 		return nil
 	}
 	return &volume
-}
-
-// isRectangle reports whether the polygon is the four corners of an
-// axis-aligned rectangle, in any order: exactly two distinct X values, exactly
-// two distinct Y values, and all four combinations present. A delta's circle
-// approximation and a Prusa XL's notched bed both fail it.
-func isRectangle(xs, ys []float64) bool {
-	if len(xs) != 4 {
-		return false
-	}
-	corners := make(map[[2]float64]bool, 4)
-	for i := range xs {
-		corners[[2]float64{xs[i], ys[i]}] = true
-	}
-	distinctX := map[float64]bool{}
-	distinctY := map[float64]bool{}
-	for corner := range corners {
-		distinctX[corner[0]] = true
-		distinctY[corner[1]] = true
-	}
-	return len(corners) == 4 && len(distinctX) == 2 && len(distinctY) == 2
 }
 
 // filamentColor is the first extruder's colour as `#rrggbb`.

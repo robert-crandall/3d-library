@@ -1,4 +1,5 @@
 import {
+  BufferAttribute,
   BufferGeometry,
   Float32BufferAttribute,
   Group,
@@ -8,6 +9,13 @@ import {
 import { createViewport, disposeTree } from '$lib/viewer/viewport';
 import { layerRange, skipSegments, spreadRange, type Toolpath } from './toolpath';
 import type { Volume } from './printer';
+
+/**
+ * Roughly how many grid lines the floor is allowed, in each direction. The exact figure
+ * does not matter - it is a bound on a loop whose length otherwise comes from a comment
+ * in an uploaded file.
+ */
+const MAX_GRID_LINES = 100;
 
 /*
   What is toolpath-shaped about the preview: line geometry per chunk, a build-volume
@@ -69,16 +77,30 @@ export function createViewer(canvas: HTMLCanvasElement): GcodeViewer {
 
   let shown: Toolpath | undefined;
 
-  function rebuild(group: Group, chunks: readonly Float32Array[], center: readonly number[]) {
+  function rebuild(group: Group, chunks: readonly Float32Array[]) {
     disposeTree(group);
     group.clear();
     for (const chunk of chunks) {
       const geometry = new BufferGeometry();
-      geometry.setAttribute('position', new Float32BufferAttribute(chunk, 3));
-      geometry.translate(-center[0], -center[1], -center[2]);
+      // `BufferAttribute`, not `Float32BufferAttribute`: the latter's constructor is
+      // `new Float32Array(array)`, which copies. At the segment cap that is a second
+      // 192 MB of parser output held alive for no reason - the chunks are already
+      // Float32Arrays of exactly the right shape.
+      geometry.setAttribute('position', new BufferAttribute(chunk, 3));
       group.add(
         new LineSegments(geometry, group === extrusion ? extrusionMaterial : travelMaterial),
       );
+    }
+  }
+
+  /**
+   * Centring is a transform on the three groups rather than `geometry.translate()`,
+   * which rewrites every float in place - up to 48 million of them at the cap, in one
+   * synchronous pass, after the parse has already finished.
+   */
+  function recentre(center: readonly number[]) {
+    for (const group of [extrusion, travel, grid]) {
+      group.position.set(-center[0], -center[1], -center[2]);
     }
   }
 
@@ -93,12 +115,13 @@ export function createViewer(canvas: HTMLCanvasElement): GcodeViewer {
       // reason: a 20 mm part on a 256 mm bed should fill the panel.
       const { center } = viewport.frame(skipSegments(toolpath.extrusion, toolpath.purgeSegments));
 
-      rebuild(extrusion, toolpath.extrusion, center);
-      rebuild(travel, toolpath.travel, center);
+      recentre(center);
+      rebuild(extrusion, toolpath.extrusion);
+      rebuild(travel, toolpath.travel);
 
       disposeTree(grid);
       grid.clear();
-      grid.add(new LineSegments(buildVolumeGeometry(volume, center), gridMaterial));
+      grid.add(new LineSegments(buildVolumeGeometry(volume), gridMaterial));
 
       this.setLayer(toolpath.layers.length - 1);
       viewport.render();
@@ -147,42 +170,50 @@ function applyRange(group: Group, segments: number) {
 }
 
 /**
- * The twelve edges of the build volume plus a 10 mm floor grid, in the same translated
- * space as the toolpaths.
+ * The twelve edges of the build volume plus a floor grid, in the printer's own
+ * coordinates - the groups carry the centring transform.
  *
- * The bed's origin is its front-left corner, which is where a printer's coordinates
- * start, so the box runs from 0 to the volume's extent rather than being centred.
+ * The box runs from the bed's declared front-left corner, not from zero. On a cartesian
+ * printer those are the same point; on a delta the bed is centred on the origin and runs
+ * negative, and a box drawn from zero would sit beside the print rather than around it.
  */
-function buildVolumeGeometry(volume: Volume, center: readonly number[]): BufferGeometry {
-  const { x, y, z } = volume;
+function buildVolumeGeometry(volume: Volume): BufferGeometry {
+  const { x: width, y: depth, z } = volume;
+  const x0 = volume.originX;
+  const y0 = volume.originY;
+  const x = x0 + width;
+  const y = y0 + depth;
   const points: number[] = [];
   const line = (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => {
     points.push(ax, ay, az, bx, by, bz);
   };
 
   for (const height of [0, z]) {
-    line(0, 0, height, x, 0, height);
-    line(x, 0, height, x, y, height);
-    line(x, y, height, 0, y, height);
-    line(0, y, height, 0, 0, height);
+    line(x0, y0, height, x, y0, height);
+    line(x, y0, height, x, y, height);
+    line(x, y, height, x0, y, height);
+    line(x0, y, height, x0, y0, height);
   }
   for (const [cx, cy] of [
-    [0, 0],
-    [x, 0],
+    [x0, y0],
+    [x, y0],
     [x, y],
-    [0, y],
+    [x0, y],
   ]) {
     line(cx, cy, 0, cx, cy, z);
   }
 
   // A 10 mm floor grid, which is the only thing in the scene that gives the print a
-  // sense of scale once the camera has framed it.
-  const step = 10;
-  for (let at = step; at < x; at += step) line(at, 0, 0, at, y, 0);
-  for (let at = step; at < y; at += step) line(0, at, 0, x, at, 0);
+  // sense of scale once the camera has framed it. The spacing coarsens rather than the
+  // count growing, because the bed comes from a comment in an uploaded file: a profile
+  // claiming a kilometre-wide bed would otherwise emit millions of lines, and a large
+  // enough one would make `at += step` stop advancing and never terminate.
+  const span = Math.max(width, depth);
+  const step = Math.max(10, 10 ** Math.ceil(Math.log10(span / MAX_GRID_LINES)));
+  for (let at = x0 + step; at < x; at += step) line(at, y0, 0, at, y, 0);
+  for (let at = y0 + step; at < y; at += step) line(x0, at, 0, x, at, 0);
 
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new Float32BufferAttribute(points, 3));
-  geometry.translate(-center[0], -center[1], -center[2]);
   return geometry;
 }
