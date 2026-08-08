@@ -1727,6 +1727,47 @@ func TestUploadExtractsSliceSettings(t *testing.T) {
 	check("detail", decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", created.ID))))
 }
 
+// The build volume and the filament colour survive the database. Every other
+// extracted field is a scalar, so a jsonb round-trip that dropped nested
+// objects would still pass every assertion above; the layer viewer draws the
+// plate from these four corners, so losing them on read means a print floating
+// over a default 220mm bed with no error anywhere.
+func TestBuildVolumeSurvivesTheDatabase(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	ts := newTestServer(t, pool, library.Options{Dir: t.TempDir()})
+	c := signIn(t, ts, "plate@example.com")
+
+	ct, part := filePart(t, "plate-1.gcode", fixture(t, "prusaslicer.gcode"))
+	resp, body := c.post("Benchy", ct, part)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	created := decodeModel(t, body)
+
+	// Read it back rather than trusting the create response: the create
+	// response is the struct that was just built in memory, so it proves
+	// nothing about what was written.
+	detail := decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", created.ID)))
+	meta := detail.Files[0].ExtractedMeta
+	if meta == nil || meta.BuildVolume == nil {
+		t.Fatalf("no buildVolume after a read: %+v", meta)
+	}
+	vol := *meta.BuildVolume
+	// bed_shape = 0x0,360x0,360x360,0x360 and max_print_height = 360.
+	if vol.MinXMm != 0 || vol.MinYMm != 0 || vol.MaxXMm != 360 || vol.MaxYMm != 360 {
+		t.Errorf("bed corners = %+v, want 0,0 -> 360,360", vol)
+	}
+	if vol.HeightMm != 360 {
+		t.Errorf("heightMm = %v, want 360", vol.HeightMm)
+	}
+	// The first colour of the semicolon-separated list, lowercased, which is
+	// the form the viewer parses.
+	if meta.FilamentColor != "#ff8000" {
+		t.Errorf("filamentColor = %q, want #ff8000", meta.FilamentColor)
+	}
+}
+
 // The two upload routes are separate handlers, and only one of them is exercised
 // by the test above. Without this, extraction could be wired into Create alone
 // and every file added to an existing model would silently lose its settings.

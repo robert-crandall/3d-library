@@ -17,12 +17,6 @@ import { parse3mf } from './threemf';
  */
 export const MAX_PREVIEW_BYTES = 100 * 1024 * 1024;
 
-/** File types this viewer understands. `type` is the server's vocabulary from
- *  `internal/library.fileTypes`, derived from the extension at upload time. */
-export function previewable(type: string): boolean {
-  return type === 'stl' || type === '3mf';
-}
-
 export function parseMesh(type: string, buffer: ArrayBuffer): ParsedMesh {
   if (type === 'stl') return parseStl(buffer);
   if (type === '3mf') return parse3mf(buffer);

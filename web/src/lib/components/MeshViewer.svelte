@@ -1,11 +1,12 @@
 <script lang="ts">
   /*
-    Screen 1c's 3D preview.
+    Screen 1c's mesh preview.
 
-    The panel owns three things: which file is showing, getting its bytes into a
-    `ParsedMesh`, and the readout beneath. Everything three.js-shaped is behind
-    `createViewer`, which needs a real GL context and so is exercised by using the
-    app rather than by a test; everything this component decides is testable here.
+    Draws one STL or 3MF. Which file that is belongs to `FilePreviewPanel`; this owns
+    getting its bytes into a `ParsedMesh` and the readout beneath. Everything
+    three.js-shaped is behind `createViewer`, which needs a real GL context and so is
+    exercised by using the app rather than by a test; everything this component decides
+    is testable here.
 
     The whole file is downloaded - a mesh cannot be read through a window the way
     `internal/gcode` and `internal/thumb` read their files, because the triangles are
@@ -13,51 +14,16 @@
     the user's bandwidth on a request the tab cannot survive.
   */
   import { onMount, untrack } from 'svelte';
-  import {
-    formatDimensions,
-    formatObjectCount,
-    boundsOf,
-    sizeOf,
-    type ParsedMesh,
-  } from '$lib/mesh/geometry';
-  import { MAX_PREVIEW_BYTES, parseMesh, previewable } from '$lib/mesh/parse';
+  import { formatObjectCount, type ParsedMesh } from '$lib/mesh/geometry';
+  import { boundsOf, formatDimensions, sizeOf } from '$lib/viewer/framing';
+  import { MAX_PREVIEW_BYTES, parseMesh } from '$lib/mesh/parse';
   import type { Shading, Viewer } from '$lib/mesh/scene';
   import { formatBytes } from '$lib/format';
   import type { ModelFile } from '$lib/upload';
 
-  let { modelId, files }: { modelId: number; files: ModelFile[] } = $props();
+  let { modelId, file }: { modelId: number; file: ModelFile } = $props();
 
-  // `files` is expected to hold at least one previewable file - the page decides whether
-  // there is anything to preview and leaves the panel out when there is not, so this
-  // component never has to render "nothing here" for a whole model.
-  //
-  // 3MF ahead of STL when a model has both. A 3MF carries its own unit and its object
-  // structure, where an STL is a bag of triangles everyone agrees to read as
-  // millimetres, so it is the better of the two to open on. Without this the default is
-  // whichever the server lists first, which is upload order wearing a disguise.
-  function openable(candidates: ModelFile[]) {
-    return (
-      candidates.find((file) => file.type === '3mf') ??
-      candidates.find((file) => previewable(file.type))
-    );
-  }
-
-  // Size first, though: opening on a file we already know we will refuse, while a mesh
-  // we could draw sits next to it in the strip, shows "too large" to someone whose model
-  // previews fine. A 3MF project file carrying every plate can pass 100 MB where the STL
-  // export of one part does not, which is the pair that reaches this. When everything is
-  // over the cap there is nothing better to pick, so the refusal is still what shows.
-  const openOn = $derived(
-    openable(files.filter((file) => file.size <= MAX_PREVIEW_BYTES)) ?? openable(files),
-  );
-
-  let selectedId = $state<number>();
-  // Searched across every file, not just the previewable ones: the strip lists all of
-  // them, and picking a .gcode has to be a selection that sticks rather than one that
-  // silently snaps back to the mesh.
-  const selected = $derived(files.find((file) => file.id === selectedId) ?? openOn);
-
-  type Status = 'unsupported' | 'too-large' | 'loading' | 'ready' | 'failed';
+  type Status = 'too-large' | 'loading' | 'ready' | 'failed';
   let status = $state<Status>('loading');
   let error = $state('');
   let readout = $state('');
@@ -171,27 +137,14 @@
   }
 
   // Keyed on the id, not on the file object. The page replaces `model` wholesale after
-  // every mutation, so the objects in `files` are new each time even when nothing about
-  // the selected file changed - tracking the object would re-download the mesh every
-  // time the user pinned a thumbnail.
-  const selectedFileId = $derived(selected?.id);
+  // every mutation, so the object in `file` is new each time even when nothing about the
+  // selected file changed - tracking the object would re-download the mesh every time
+  // the user pinned a thumbnail.
+  const fileId = $derived(file.id);
 
   $effect(() => {
-    const id = selectedFileId;
-    untrack(() => {
-      const file = files.find((candidate) => candidate.id === id);
-      if (file && previewable(file.type)) {
-        void load(file);
-        return;
-      }
-      // The user picked one of the other files in the strip. Stop whatever the last
-      // selection started, or a mesh still in flight paints over the message.
-      generation++;
-      inFlight?.abort();
-      status = 'unsupported';
-      error = '';
-      readout = '';
-    });
+    fileId;
+    untrack(() => void load(file));
   });
 
   function choose(next: Shading) {
@@ -206,7 +159,7 @@
   ];
 </script>
 
-<section class="rounded-tile border border-line bg-surface" data-testid="mesh-viewer">
+<div data-testid="mesh-viewer">
   <div class="relative h-80">
     <!--
       Always mounted, so the GL context is created once and survives a switch between
@@ -224,11 +177,6 @@
       <div class="absolute inset-0 flex items-center justify-center px-6 text-center">
         {#if status === 'loading'}
           <p class="text-sm text-muted">Loading preview…</p>
-        {:else if status === 'unsupported'}
-          <p role="status" class="max-w-md text-sm text-muted">
-            There is no 3D preview for {selected?.filename}. The viewer shows STL and 3MF
-            meshes; download it to open it in something that reads this.
-          </p>
         {:else}
           <p role="alert" class="max-w-md text-sm text-muted">{error}</p>
         {/if}
@@ -266,27 +214,4 @@
     </div>
   {/if}
 
-  {#if files.length > 1}
-    <!--
-      Every file, not just the previewable ones, matching design 1c's strip - it lists
-      a .gcode and a .jpg alongside the meshes. Clicking one of those is a real
-      selection that lands on the "no preview" state, which is the point: a file the
-      viewer cannot draw has to say so, not be missing from the strip and leave the user
-      wondering where it went. Only when there is a choice to make, though - a control
-      with a single option is a label pretending to be a button.
-    -->
-    <div class="flex flex-wrap gap-1 border-t border-line px-4 py-2">
-      {#each files as file (file.id)}
-        <button
-          type="button"
-          class="max-w-56 truncate rounded border border-line-strong px-2 py-1 text-xs"
-          class:font-bold={selected?.id === file.id}
-          aria-pressed={selected?.id === file.id}
-          onclick={() => (selectedId = file.id)}
-        >
-          {file.filename}
-        </button>
-      {/each}
-    </div>
-  {/if}
-</section>
+</div>
