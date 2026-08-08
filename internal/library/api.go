@@ -25,6 +25,10 @@ func Register(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	registerAddFile(api, svc, currentUser)
 	registerList(api, svc, currentUser)
 	registerGet(api, svc, currentUser)
+	registerUpdate(api, svc, currentUser)
+	registerDeleteModel(api, svc, currentUser)
+	registerDeleteFile(api, svc, currentUser)
+	registerDownload(api, svc, currentUser)
 }
 
 // uploadInput carries the streaming multipart reader from the resolver to the
@@ -234,7 +238,7 @@ func (s *Service) guardUpload(api huma.API, currentUser CurrentUserFunc) func(hu
 }
 
 type modelOutput struct {
-	Body Model
+	Body ModelDetail
 }
 
 type modelsOutput struct {
@@ -291,5 +295,177 @@ func registerGet(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 			return nil, err
 		}
 		return &modelOutput{Body: model}, nil
+	})
+}
+
+// updateInput is the whole editable metadata surface, every field required.
+//
+// This is PUT, not PATCH, because it is a full replacement: the detail screen
+// submits one form containing all four fields, so there is no partial update to
+// express. Pointer fields and a "which keys arrived" branch would buy partial
+// semantics for a caller that does not exist.
+type updateInput struct {
+	ID   int64 `path:"id"`
+	Body struct {
+		Name        string `json:"name" required:"true" maxLength:"200" doc:"The model's display name"`
+		Description string `json:"description" required:"true" maxLength:"5000" doc:"Free text, may be empty"`
+		PrintTips   string `json:"printTips" required:"true" maxLength:"5000" doc:"One tip per line, may be empty"`
+		SourceURL   string `json:"sourceUrl" required:"true" maxLength:"2000" doc:"An http:// or https:// address, or empty"`
+	}
+}
+
+func registerUpdate(api huma.API, svc *Service, currentUser CurrentUserFunc) {
+	huma.Register(api, huma.Operation{
+		OperationID: "update-model",
+		Summary:     "Update a model's metadata",
+		Description: "Replaces the model's editable metadata. All four fields " +
+			"are sent every time; an empty string clears a field. The name may " +
+			"not be blank.",
+		Method:   http.MethodPut,
+		Path:     "/api/models/{id}",
+		Tags:     []string{"library"},
+		Errors:   []int{http.StatusUnauthorized, http.StatusNotFound, http.StatusUnprocessableEntity},
+		Security: apisec.User(api),
+	}, func(ctx context.Context, in *updateInput) (*modelOutput, error) {
+		userID, err := currentUser(ctx)
+		if err != nil {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		model, err := svc.Update(ctx, userID, in.ID, Edits{
+			Name:        in.Body.Name,
+			Description: in.Body.Description,
+			PrintTips:   in.Body.PrintTips,
+			SourceURL:   in.Body.SourceURL,
+		})
+		if errors.Is(err, ErrNotFound) {
+			return nil, huma.Error404NotFound("model not found")
+		}
+		if err != nil {
+			return nil, uploadError(err)
+		}
+		return &modelOutput{Body: model}, nil
+	})
+}
+
+func registerDeleteModel(api huma.API, svc *Service, currentUser CurrentUserFunc) {
+	huma.Register(api, huma.Operation{
+		OperationID:   "delete-model",
+		Summary:       "Delete a model",
+		Description:   "Removes the model, every file it owns, and their stored blobs. There is no undo.",
+		Method:        http.MethodDelete,
+		Path:          "/api/models/{id}",
+		Tags:          []string{"library"},
+		DefaultStatus: http.StatusNoContent,
+		Errors:        []int{http.StatusUnauthorized, http.StatusNotFound},
+		Security:      apisec.User(api),
+	}, func(ctx context.Context, in *struct {
+		ID int64 `path:"id"`
+	}) (*struct{}, error) {
+		userID, err := currentUser(ctx)
+		if err != nil {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		if err := svc.DeleteModel(ctx, userID, in.ID); errors.Is(err, ErrNotFound) {
+			return nil, huma.Error404NotFound("model not found")
+		} else if err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+}
+
+func registerDeleteFile(api huma.API, svc *Service, currentUser CurrentUserFunc) {
+	huma.Register(api, huma.Operation{
+		OperationID: "delete-model-file",
+		Summary:     "Delete a file from a model",
+		Description: "Removes one file and its stored blob. The model stays, " +
+			"even if that was its last file.",
+		Method:        http.MethodDelete,
+		Path:          "/api/models/{id}/files/{fileId}",
+		Tags:          []string{"library"},
+		DefaultStatus: http.StatusNoContent,
+		Errors:        []int{http.StatusUnauthorized, http.StatusNotFound},
+		Security:      apisec.User(api),
+	}, func(ctx context.Context, in *struct {
+		ID     int64 `path:"id"`
+		FileID int64 `path:"fileId"`
+	}) (*struct{}, error) {
+		userID, err := currentUser(ctx)
+		if err != nil {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		if err := svc.DeleteFile(ctx, userID, in.ID, in.FileID); errors.Is(err, ErrNotFound) {
+			return nil, huma.Error404NotFound("file not found")
+		} else if err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+}
+
+func registerDownload(api huma.API, svc *Service, currentUser CurrentUserFunc) {
+	huma.Register(api, huma.Operation{
+		OperationID: "download-model-file",
+		Summary:     "Download a file's contents",
+		Description: "The file's raw bytes, always as an attachment.",
+		Method:      http.MethodGet,
+		Path:        "/api/models/{id}/files/{fileId}",
+		Tags:        []string{"library"},
+		Errors:      []int{http.StatusUnauthorized, http.StatusNotFound},
+		Security:    apisec.User(api),
+
+		// huma cannot infer a body schema from StreamResponse, so without this
+		// the committed spec claims the endpoint returns nothing at all.
+		// octet-stream is the standard way to say "arbitrary bytes"; the
+		// runtime Content-Type is whatever was sniffed at upload.
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "The file's raw bytes. The response Content-Type is the type detected at upload, not necessarily application/octet-stream.",
+				Content: map[string]*huma.MediaType{
+					"application/octet-stream": {
+						Schema: &huma.Schema{Type: "string", Format: "binary"},
+					},
+				},
+			},
+		},
+	}, func(ctx context.Context, in *struct {
+		ID     int64 `path:"id"`
+		FileID int64 `path:"fileId"`
+	}) (*huma.StreamResponse, error) {
+		userID, err := currentUser(ctx)
+		if err != nil {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		fh, meta, err := svc.Open(ctx, userID, in.ID, in.FileID)
+		if errors.Is(err, ErrNotFound) {
+			return nil, huma.Error404NotFound("file not found")
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		return &huma.StreamResponse{Body: func(hctx huma.Context) {
+			defer fh.Close()
+			r, w := humachi.Unwrap(hctx)
+			w.Header().Set("Content-Type", meta.ContentType)
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			// Always attachment, never inline. The foundation's file service
+			// inlines text and images; this one deliberately does not reuse
+			// that. content_type is sniffed from the bytes, so a file whose
+			// bytes really are HTML is served text/html - and inline would make
+			// that stored XSS on the app's own origin. Nothing in this app
+			// needs a model file rendered in a tab.
+			w.Header().Set("Content-Disposition",
+				mime.FormatMediaType("attachment", map[string]string{"filename": meta.Filename}))
+			// Per-user and deletable, so it must not be cached without
+			// revalidation: a browser cache keys on URL, not on session.
+			w.Header().Set("Cache-Control", "private, no-cache")
+			// ServeContent sets Content-Length and answers Range and
+			// conditional requests in less code than doing it by hand. huma
+			// runs this before writing status or headers, so its 206 and 304
+			// responses land intact. The modtime must be non-zero or
+			// If-Modified-Since is skipped.
+			http.ServeContent(w, r, meta.Filename, meta.CreatedAt, fh)
+		}}, nil
 	})
 }

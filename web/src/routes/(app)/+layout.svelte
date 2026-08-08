@@ -1,8 +1,14 @@
 <script lang="ts">
   import SignOutButton from '$lib/components/SignOutButton.svelte';
   import ThemeToggle from '$lib/components/ThemeToggle.svelte';
+  import { page } from '$app/state';
 
   let { children } = $props();
+
+  // Derived, not hardcoded. There are two routes now, and a nav that always
+  // claims to be on the current page tells a screen reader the wrong thing
+  // everywhere except the library.
+  const onLibrary = $derived(page.url.pathname === '/');
 </script>
 
 <!--
@@ -31,8 +37,9 @@
     <nav class="px-3" aria-label="Library">
       <a
         href="/"
-        aria-current="page"
-        class="flex items-center rounded bg-line-strong/60 px-3 py-2 text-sm font-medium"
+        aria-current={onLibrary ? 'page' : undefined}
+        class="flex items-center rounded px-3 py-2 text-sm font-medium"
+        class:bg-line-strong={onLibrary}
       >
         All models
       </a>

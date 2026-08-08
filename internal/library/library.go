@@ -14,7 +14,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
+	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -133,16 +136,42 @@ func maxBodyBytes(perFile int64) int64 {
 	return perFile + 1<<20
 }
 
-// Model is a library entry. FileCount and TotalSize are derived on read rather
-// than stored: they are one aggregate over an indexed foreign key at
-// single-user scale, and a stored counter would be a cache to invalidate.
+// Model is a library entry as the grid sees it. FileCount and TotalSize are
+// derived on read rather than stored: they are one aggregate over an indexed
+// foreign key at single-user scale, and a stored counter would be a cache to
+// invalidate.
 type Model struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`
 	FileCount int       `json:"fileCount"`
 	TotalSize int64     `json:"totalSize"`
 	CreatedAt time.Time `json:"createdAt"`
-	Files     []File    `json:"files,omitempty"`
+}
+
+// ModelDetail is one model with the editable metadata and the files it owns.
+//
+// It is a separate type from Model rather than Model with optional fields,
+// because the two responses genuinely differ. Files cannot live on Model with
+// `omitempty`: an empty slice would then be omitted entirely, so a model whose
+// last file was just deleted would arrive with no files key at all and the
+// detail page would have to guess. Without `omitempty` the grid's response
+// would carry `"files": null` on every entry instead. Splitting the type says
+// the true thing in both places, and keeps up to 12 KB of description and print
+// tips per model off a grid that renders neither.
+//
+// Files is always non-nil, so an empty model sends `[]`. `nullable:"false"`
+// makes the schema say so: huma types a Go slice as array-or-null by default,
+// which would make every client null-check a field that cannot be null.
+type ModelDetail struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	FileCount   int       `json:"fileCount"`
+	TotalSize   int64     `json:"totalSize"`
+	CreatedAt   time.Time `json:"createdAt"`
+	Description string    `json:"description"`
+	PrintTips   string    `json:"printTips"`
+	SourceURL   string    `json:"sourceUrl"`
+	Files       []File    `json:"files" nullable:"false"`
 }
 
 // File is one uploaded file belonging to a model.
@@ -180,15 +209,15 @@ type staged struct {
 // the reverse leaves the library showing an entry whose file is not there. The
 // transaction is opened only once every byte is on disk, so a slow upload never
 // holds a connection.
-func (s *Service) Create(ctx context.Context, userID int64, name string, parts *multipart.Reader) (Model, error) {
+func (s *Service) Create(ctx context.Context, userID int64, name string, parts *multipart.Reader) (ModelDetail, error) {
 	file, err := s.stageOnly(parts)
 	if err != nil {
 		removeOne(file)
-		return Model{}, err
+		return ModelDetail{}, err
 	}
 	if err := s.publish(&file); err != nil {
 		removeOne(file)
-		return Model{}, err
+		return ModelDetail{}, err
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -196,11 +225,11 @@ func (s *Service) Create(ctx context.Context, userID int64, name string, parts *
 		// The commit was never attempted, so the blob is unreferenced and
 		// removing it is safe.
 		removeOne(file)
-		return Model{}, fmt.Errorf("library: begin: %w", err)
+		return ModelDetail{}, fmt.Errorf("library: begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	var m Model
+	var m ModelDetail
 	m.Name = name
 	err = tx.QueryRow(ctx,
 		`INSERT INTO models (user_id, name) VALUES ($1, $2) RETURNING id, created_at`,
@@ -208,13 +237,13 @@ func (s *Service) Create(ctx context.Context, userID int64, name string, parts *
 	).Scan(&m.ID, &m.CreatedAt)
 	if err != nil {
 		removeOne(file)
-		return Model{}, fmt.Errorf("library: insert model: %w", err)
+		return ModelDetail{}, fmt.Errorf("library: insert model: %w", err)
 	}
 
 	out, err := insertFile(ctx, tx, m.ID, file)
 	if err != nil {
 		removeOne(file)
-		return Model{}, err
+		return ModelDetail{}, err
 	}
 
 	// Past this point the file is never removed. A commit can succeed on the
@@ -223,7 +252,7 @@ func (s *Service) Create(ctx context.Context, userID int64, name string, parts *
 	// ordering prevents. An unreferenced blob is the better end of that trade -
 	// it costs disk, not correctness.
 	if err := tx.Commit(ctx); err != nil {
-		return Model{}, fmt.Errorf("library: commit: %w", err)
+		return ModelDetail{}, fmt.Errorf("library: commit: %w", err)
 	}
 
 	m.Files = []File{out}
@@ -389,7 +418,9 @@ func (s *Service) stageOne(part *multipart.Part) (staged, error) {
 	}
 
 	tmpPath := filepath.Join(s.dir, tmpPrefix+key)
-	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	// O_RDWR rather than O_WRONLY so the sniff below can read the head back
+	// without reopening the file.
+	f, err := os.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return staged{}, fmt.Errorf("library: create: %w", err)
 	}
@@ -398,6 +429,18 @@ func (s *Service) stageOne(part *multipart.Part) (staged, error) {
 	// Reading one byte past the cap is what distinguishes "exactly at the cap"
 	// from "over it" without buffering anything.
 	size, err := io.Copy(f, io.LimitReader(part, s.maxFileBytes+1))
+
+	// Sniff before closing. http.DetectContentType looks at the first 512
+	// bytes, and ReadAt takes an absolute offset so the write position does not
+	// matter. A short read is fine: DetectContentType is defined over whatever
+	// it is given.
+	var head [512]byte
+	n, readErr := f.ReadAt(head[:], 0)
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		f.Close()
+		return st, fmt.Errorf("library: sniff: %w", readErr)
+	}
+
 	closeErr := f.Close()
 	if err != nil {
 		return st, fmt.Errorf("library: write: %w", err)
@@ -410,10 +453,15 @@ func (s *Service) stageOne(part *multipart.Part) (staged, error) {
 	}
 
 	st.size = size
-	st.ctype = part.Header.Get("Content-Type")
-	if st.ctype == "" {
-		st.ctype = "application/octet-stream"
-	}
+	// The stored content type is a statement about the bytes, never about what
+	// the client claimed. The multipart part header is attacker-controlled, so
+	// trusting it - even only as a fallback when the sniff comes back generic -
+	// would let arbitrary bytes be stored as image/png, which is precisely the
+	// claim the thumbnail milestone must not believe. The *domain* type is not
+	// lost by this: fileType() derives it from the extension and is
+	// authoritative, so a binary STL sniffing as application/octet-stream keeps
+	// type="stl" either way.
+	st.ctype = http.DetectContentType(head[:n])
 	return st, nil
 }
 
@@ -452,41 +500,257 @@ func (s *Service) List(ctx context.Context, userID int64) ([]Model, error) {
 
 // Get returns one model with its files, or ErrNotFound if it does not exist or
 // belongs to somebody else.
-func (s *Service) Get(ctx context.Context, userID, id int64) (Model, error) {
-	var m Model
+func (s *Service) Get(ctx context.Context, userID, id int64) (ModelDetail, error) {
+	var m ModelDetail
 	err := s.db.QueryRow(ctx,
-		`SELECT id, name, created_at FROM models WHERE id = $1 AND user_id = $2`,
+		`SELECT id, name, created_at, description, print_tips, source_url
+		   FROM models WHERE id = $1 AND user_id = $2`,
 		id, userID,
-	).Scan(&m.ID, &m.Name, &m.CreatedAt)
+	).Scan(&m.ID, &m.Name, &m.CreatedAt, &m.Description, &m.PrintTips, &m.SourceURL)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Model{}, ErrNotFound
+		return ModelDetail{}, ErrNotFound
 	}
 	if err != nil {
-		return Model{}, fmt.Errorf("library: get: %w", err)
+		return ModelDetail{}, fmt.Errorf("library: get: %w", err)
 	}
 
+	if err := s.loadFiles(ctx, &m); err != nil {
+		return ModelDetail{}, err
+	}
+	return m, nil
+}
+
+// loadFiles fills in Files and the two derived totals. Files is set to an empty
+// slice first, so a model with none encodes as [] rather than null - a model
+// with no files is a legal state once a file can be deleted, and the detail page
+// has to render it rather than guess at a missing key.
+func (s *Service) loadFiles(ctx context.Context, m *ModelDetail) error {
 	rows, err := s.db.Query(ctx,
 		`SELECT id, filename, type, content_type, size_bytes, created_at
-		   FROM model_files WHERE model_id = $1 ORDER BY id`, id)
+		   FROM model_files WHERE model_id = $1 ORDER BY id`, m.ID)
 	if err != nil {
-		return Model{}, fmt.Errorf("library: get files: %w", err)
+		return fmt.Errorf("library: get files: %w", err)
 	}
 	defer rows.Close()
 
 	m.Files = []File{}
+	m.TotalSize = 0
 	for rows.Next() {
 		var f File
 		if err := rows.Scan(&f.ID, &f.Filename, &f.Type, &f.ContentType, &f.Size, &f.CreatedAt); err != nil {
-			return Model{}, fmt.Errorf("library: get files: %w", err)
+			return fmt.Errorf("library: get files: %w", err)
 		}
 		m.Files = append(m.Files, f)
 		m.TotalSize += f.Size
 	}
 	if err := rows.Err(); err != nil {
-		return Model{}, fmt.Errorf("library: get files: %w", err)
+		return fmt.Errorf("library: get files: %w", err)
 	}
 	m.FileCount = len(m.Files)
+	return nil
+}
+
+// Edits carries the model metadata the detail screen may change. Every field is
+// replaced on every call: this is the whole editable surface, submitted as one
+// form, so there is no partial update for optional fields to express.
+type Edits struct {
+	Name        string
+	Description string
+	PrintTips   string
+	SourceURL   string
+}
+
+// Update replaces a model's editable metadata and returns the saved result.
+//
+// Validation runs before the UPDATE, so a rejected edit changes nothing - the
+// acceptance criterion is "does not change the record", not "shows no change".
+func (s *Service) Update(ctx context.Context, userID, id int64, e Edits) (ModelDetail, error) {
+	// Trim first, so a name of "   " is empty rather than a 3-character name.
+	e.Name = strings.TrimSpace(e.Name)
+	e.Description = strings.TrimSpace(e.Description)
+	e.PrintTips = strings.TrimSpace(e.PrintTips)
+	e.SourceURL = strings.TrimSpace(e.SourceURL)
+
+	if e.Name == "" {
+		return ModelDetail{}, fmt.Errorf("%w: a model needs a name", errInvalid)
+	}
+	if err := validSourceURL(e.SourceURL); err != nil {
+		return ModelDetail{}, err
+	}
+
+	var m ModelDetail
+	err := s.db.QueryRow(ctx,
+		`UPDATE models SET name = $3, description = $4, print_tips = $5, source_url = $6
+		  WHERE id = $1 AND user_id = $2
+		RETURNING id, name, created_at, description, print_tips, source_url`,
+		id, userID, e.Name, e.Description, e.PrintTips, e.SourceURL,
+	).Scan(&m.ID, &m.Name, &m.CreatedAt, &m.Description, &m.PrintTips, &m.SourceURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ModelDetail{}, ErrNotFound
+	}
+	if err != nil {
+		return ModelDetail{}, fmt.Errorf("library: update: %w", err)
+	}
+
+	if err := s.loadFiles(ctx, &m); err != nil {
+		return ModelDetail{}, err
+	}
 	return m, nil
+}
+
+// validSourceURL rejects anything that is not an ordinary web link.
+//
+// This is a real hole, not a hypothetical one: the SPA renders the value as
+// <a href={sourceUrl}>, and "javascript:alert(1)" in that attribute is script
+// execution on the app's own origin. The API is the guard, because the API is
+// the only thing every client goes through. A host is required as well as a
+// scheme, since "https:garbage" parses with scheme https and is not a link.
+func validSourceURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%w: source URL is not a URL", errInvalid)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("%w: source URL must be an http:// or https:// address", errInvalid)
+	}
+	return nil
+}
+
+// DeleteModel removes a model, its file rows, and then its blobs.
+//
+// Rows before blobs, and every row in one transaction: the worst outcome of a
+// crash in the middle is a blob nobody references, which costs disk, and never
+// a row pointing at a file that is not there, which is the failure the library
+// exists to prevent.
+func (s *Service) DeleteModel(ctx context.Context, userID, id int64) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("library: begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// FOR UPDATE is the same row lock AddFile takes, and it is what makes the
+	// key list below complete. Without it, an AddFile that commits between the
+	// two DELETEs has its brand-new row swept away by the models delete (via ON
+	// DELETE CASCADE) with nobody holding its storage key, orphaning that blob.
+	// Taking the lock first means this waits for that upload and then sees its
+	// row. It costs one clause on a query the ownership check needs anyway.
+	var owned int64
+	err = tx.QueryRow(ctx,
+		`SELECT id FROM models WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+		id, userID).Scan(&owned)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("library: check model: %w", err)
+	}
+
+	// Children are deleted explicitly rather than left to ON DELETE CASCADE,
+	// because RETURNING is how the storage keys are learnt. The cascade stays
+	// as the backstop it already was.
+	rows, err := tx.Query(ctx,
+		`DELETE FROM model_files WHERE model_id = $1 RETURNING storage_key`, id)
+	if err != nil {
+		return fmt.Errorf("library: delete files: %w", err)
+	}
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			rows.Close()
+			return fmt.Errorf("library: delete files: %w", err)
+		}
+		keys = append(keys, key)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("library: delete files: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM models WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("library: delete model: %w", err)
+	}
+
+	// Blobs are removed only once the commit has been acknowledged. A commit
+	// error is ambiguous - it may have succeeded on the server and lost the
+	// reply - so unlinking on that path could delete the blobs of rows that
+	// survived. Create follows the same rule in the other direction.
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("library: commit: %w", err)
+	}
+
+	s.removeBlobs(ctx, keys)
+	return nil
+}
+
+// DeleteFile removes one file from a model, leaving the model in place. A model
+// with no files left is a legal state: it is what makes a half-finished upload
+// repairable without deleting the whole entry.
+func (s *Service) DeleteFile(ctx context.Context, userID, modelID, fileID int64) error {
+	// One statement, no transaction: a single DELETE is already atomic, and the
+	// join is what enforces ownership, so another user's file is not found
+	// rather than forbidden.
+	var key string
+	err := s.db.QueryRow(ctx,
+		`DELETE FROM model_files f USING models m
+		  WHERE f.id = $1 AND f.model_id = $2 AND m.id = f.model_id AND m.user_id = $3
+		RETURNING f.storage_key`,
+		fileID, modelID, userID).Scan(&key)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("library: delete file: %w", err)
+	}
+
+	s.removeBlobs(ctx, []string{key})
+	return nil
+}
+
+// Open returns an open handle to one file's blob, with the row that describes
+// it, or ErrNotFound if the file does not exist or belongs to somebody else.
+// The caller closes the handle.
+func (s *Service) Open(ctx context.Context, userID, modelID, fileID int64) (*os.File, File, error) {
+	var f File
+	var key string
+	err := s.db.QueryRow(ctx,
+		`SELECT f.id, f.filename, f.type, f.content_type, f.size_bytes, f.created_at, f.storage_key
+		   FROM model_files f JOIN models m ON m.id = f.model_id
+		  WHERE f.id = $1 AND f.model_id = $2 AND m.user_id = $3`,
+		fileID, modelID, userID,
+	).Scan(&f.ID, &f.Filename, &f.Type, &f.ContentType, &f.Size, &f.CreatedAt, &key)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, File{}, ErrNotFound
+	}
+	if err != nil {
+		return nil, File{}, fmt.Errorf("library: open: %w", err)
+	}
+
+	// A row whose blob is missing is a 500, not a 404. The row exists, so the
+	// database and the disk disagree, and that is a server fault the caller
+	// cannot fix - reporting it as "not found" would hide the one inconsistency
+	// this package is built to prevent.
+	fh, err := os.Open(filepath.Join(s.dir, key))
+	if err != nil {
+		return nil, File{}, fmt.Errorf("library: open blob %q: %w", key, err)
+	}
+	return fh, f, nil
+}
+
+// removeBlobs unlinks committed blobs. A failure here is logged and otherwise
+// ignored: the rows are already gone, so the only cost is disk that nothing
+// references, and there is nothing useful to tell the caller who asked for a
+// delete that did happen.
+func (s *Service) removeBlobs(ctx context.Context, keys []string) {
+	for _, key := range keys {
+		if err := os.Remove(filepath.Join(s.dir, key)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.WarnContext(ctx, "library: orphaned blob", "key", key, "error", err)
+		}
+	}
 }
 
 // removeOne deletes a blob that is not referenced by any committed row. It is

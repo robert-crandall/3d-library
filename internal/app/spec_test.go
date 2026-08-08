@@ -63,7 +63,11 @@ func TestSpecDescribesTheContract(t *testing.T) {
 		{"/api/models", "get", "200", []string{"401"}},
 		{"/api/models", "post", "201", []string{"401", "413", "422"}},
 		{"/api/models/{id}", "get", "200", []string{"401", "404"}},
+		{"/api/models/{id}", "put", "200", []string{"401", "404", "422"}},
+		{"/api/models/{id}", "delete", "204", []string{"401", "404"}},
 		{"/api/models/{id}/files", "post", "201", []string{"401", "404", "413", "422"}},
+		{"/api/models/{id}/files/{fileId}", "get", "200", []string{"401", "404"}},
+		{"/api/models/{id}/files/{fileId}", "delete", "204", []string{"401", "404"}},
 		{"/api/auth/register", "post", "", []string{"403", "409", "422"}},
 		{"/api/auth/login", "post", "", []string{"401"}},
 		{"/api/auth/logout", "post", "", nil},
@@ -94,6 +98,51 @@ func TestSpecDescribesTheContract(t *testing.T) {
 				t.Errorf("%s %s does not declare a %s response", tc.method, tc.path, code)
 			}
 		}
+	}
+}
+
+// The download route is the only operation whose body huma cannot infer:
+// huma.StreamResponse carries no type, so without an explicit Responses map the
+// spec declares a 200 with no content at all and a generated client has nothing
+// to call. The table above would not notice - it only asks whether a 200 is
+// *present*, which it is either way. This asks what is in it.
+func TestSpecDeclaresTheDownloadBody(t *testing.T) {
+	// Decoded one path at a time rather than all of them into one shape: other
+	// operations declare a nullable array body, whose "type" is a list rather
+	// than a string, and a struct covering every path would fail to unmarshal
+	// on those instead of measuring this one.
+	var doc struct {
+		Paths map[string]json.RawMessage `json:"paths"`
+	}
+	if err := json.Unmarshal(generate(t), &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	const path = "/api/models/{id}/files/{fileId}"
+	var item struct {
+		Get struct {
+			Responses map[string]struct {
+				Content map[string]struct {
+					Schema struct {
+						Type   string `json:"type"`
+						Format string `json:"format"`
+					} `json:"schema"`
+				} `json:"content"`
+			} `json:"responses"`
+		} `json:"get"`
+	}
+	if err := json.Unmarshal(doc.Paths[path], &item); err != nil {
+		t.Fatalf("unmarshal %s: %v", path, err)
+	}
+
+	body, ok := item.Get.Responses["200"].Content["application/octet-stream"]
+	if !ok {
+		t.Fatalf("GET %s declares no application/octet-stream body; it declares %v",
+			path, slices.Sorted(maps.Keys(item.Get.Responses["200"].Content)))
+	}
+	if body.Schema.Type != "string" || body.Schema.Format != "binary" {
+		t.Errorf("download body schema is %s/%s, want string/binary",
+			body.Schema.Type, body.Schema.Format)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -152,6 +153,33 @@ func (c *client) do(url, contentType string, body io.Reader) (*http.Response, st
 	return resp, string(out)
 }
 
+// send is get's mutating sibling: any method, an optional JSON body, and the
+// response read to completion so the caller can assert on it.
+func (c *client) send(method, path, body string) (*http.Response, string) {
+	c.t.Helper()
+	var r io.Reader
+	if body != "" {
+		r = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, c.ts.URL+path, r)
+	if err != nil {
+		c.t.Fatalf("request %s %s: %v", method, path, err)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		c.t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.t.Fatalf("read %s %s: %v", method, path, err)
+	}
+	return resp, string(out)
+}
+
 func (c *client) get(path string) (*http.Response, string) {
 	c.t.Helper()
 	resp, err := c.hc.Get(c.ts.URL + path)
@@ -166,9 +194,12 @@ func (c *client) get(path string) (*http.Response, string) {
 	return resp, string(out)
 }
 
-func decodeModel(t *testing.T, body string) library.Model {
+// decodeModel reads a single-model response. Every endpoint that returns one
+// whole model - create, get, update - returns the detail shape; only the list
+// returns the summary.
+func decodeModel(t *testing.T, body string) library.ModelDetail {
 	t.Helper()
-	var m library.Model
+	var m library.ModelDetail
 	if err := json.Unmarshal([]byte(body), &m); err != nil {
 		t.Fatalf("decode model: %v (body %q)", err, body)
 	}
@@ -258,10 +289,19 @@ func TestUploadThenBrowse(t *testing.T) {
 	if listed[0].FileCount != 3 || listed[0].TotalSize != created.TotalSize {
 		t.Errorf("list entry = %+v, want the same counts as the create response", listed[0])
 	}
-	// The grid renders from the list, which never needs the file rows, so the
-	// list must not pay for them.
-	if listed[0].Files != nil {
-		t.Errorf("list included per-file detail: %+v", listed[0].Files)
+	// The grid renders from the list, which needs neither the file rows nor the
+	// prose, so the list must not pay for them. Checked against the raw JSON
+	// rather than the decoded struct: library.Model has no such fields, so
+	// decoding would drop them silently and this would pass no matter what the
+	// server sent.
+	var raw []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		t.Fatalf("decode list keys: %v", err)
+	}
+	for _, key := range []string{"files", "description", "printTips", "sourceUrl"} {
+		if _, ok := raw[0][key]; ok {
+			t.Errorf("list entry carries %q, which the grid does not render", key)
+		}
 	}
 
 	resp, body = c.get(fmt.Sprintf("/api/models/%d", created.ID))
@@ -1046,5 +1086,507 @@ func TestAbandonedUploadCommitsNothing(t *testing.T) {
 	}
 	if len(models) != 0 {
 		t.Errorf("got %d models, want 0 - an abandoned upload committed", len(models))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 2: inspect, edit, delete.
+// ---------------------------------------------------------------------------
+
+// edits is the whole PUT body. Every field is required, because the update
+// replaces the editable metadata rather than patching it.
+func edits(name, description, printTips, sourceURL string) string {
+	body, err := json.Marshal(map[string]string{
+		"name": name, "description": description,
+		"printTips": printTips, "sourceUrl": sourceURL,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return string(body)
+}
+
+// An edit is only real if it survives the round trip. Asserting on the PUT
+// response alone would pass even if the handler never wrote anything, so this
+// re-reads through a fresh GET - which is also what the page does not do, on
+// purpose, so this is the only thing checking the two agree.
+func TestEditingAModelPersists(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	ts := newTestServer(t, pool, library.Options{Dir: t.TempDir()})
+	c := signIn(t, ts, "editor@example.com")
+
+	resp, body := c.upload("Draft", map[string]string{"a.stl": "solid a"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	created := decodeModel(t, body)
+	if created.Description != "" || created.PrintTips != "" || created.SourceURL != "" {
+		t.Errorf("a new model starts with metadata: %+v", created)
+	}
+
+	resp, body = c.send(http.MethodPut, fmt.Sprintf("/api/models/%d", created.ID),
+		edits("Filament Dry Box", "Holds four spools.", "PETG at 245 C.\nBed 80 C.",
+			"https://www.printables.com/model/48213"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update: got %d: %s", resp.StatusCode, body)
+	}
+
+	// Both the response and a fresh read, because they are different claims:
+	// the first is what the page renders, the second is what was stored.
+	for _, got := range []library.ModelDetail{
+		decodeModel(t, body),
+		decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", created.ID))),
+	} {
+		if got.Name != "Filament Dry Box" {
+			t.Errorf("name = %q", got.Name)
+		}
+		if got.Description != "Holds four spools." {
+			t.Errorf("description = %q", got.Description)
+		}
+		if got.PrintTips != "PETG at 245 C.\nBed 80 C." {
+			t.Errorf("printTips = %q", got.PrintTips)
+		}
+		if got.SourceURL != "https://www.printables.com/model/48213" {
+			t.Errorf("sourceUrl = %q", got.SourceURL)
+		}
+		// An update must not disturb the files it does not mention.
+		if got.FileCount != 1 || len(got.Files) != 1 || got.Files[0].Filename != "a.stl" {
+			t.Errorf("update changed the files: %+v", got.Files)
+		}
+	}
+}
+
+// The two rules the server owns. Both are refusals, and both have to leave the
+// stored row exactly as it was - a validator that rejects the request after
+// writing half of it is worse than no validator.
+func TestUpdateRefusesWhatItCannotStore(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	ts := newTestServer(t, pool, library.Options{Dir: t.TempDir()})
+	c := signIn(t, ts, "refuser@example.com")
+
+	resp, body := c.upload("Keeper", map[string]string{"a.stl": "solid a"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	id := decodeModel(t, body).ID
+	path := fmt.Sprintf("/api/models/%d", id)
+
+	for _, tc := range []struct {
+		what string
+		body string
+	}{
+		{"an empty name", edits("", "", "", "")},
+		{"a whitespace-only name", edits("   \t ", "", "", "")},
+		// A name that is only whitespace is the interesting one: huma's
+		// minLength sees three characters and lets it through, so nothing but
+		// the service's own trim stands between it and a nameless model.
+		{"a javascript: source", edits("Keeper", "", "", "javascript:alert(1)")},
+		{"an ftp: source", edits("Keeper", "", "", "ftp://example.com/x.stl")},
+		{"a source with no host", edits("Keeper", "", "", "https:garbage")},
+		{"a source that is just words", edits("Keeper", "", "", "printables, probably")},
+	} {
+		resp, out := c.send(http.MethodPut, path, tc.body)
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("%s: got %d, want 422: %s", tc.what, resp.StatusCode, out)
+		}
+	}
+
+	got := decodeModel(t, mustGet(t, c, path))
+	if got.Name != "Keeper" || got.SourceURL != "" {
+		t.Errorf("a refused update still changed the model: %+v", got)
+	}
+}
+
+// The shapes a source URL is allowed to be. Paired with the refusals above so
+// the validator cannot pass both halves by rejecting everything.
+func TestUpdateAcceptsUsableSourceURLs(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	ts := newTestServer(t, pool, library.Options{Dir: t.TempDir()})
+	c := signIn(t, ts, "linker@example.com")
+
+	resp, body := c.upload("Linked", map[string]string{"a.stl": "solid a"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	path := fmt.Sprintf("/api/models/%d", decodeModel(t, body).ID)
+
+	for _, want := range []string{
+		"",
+		"http://example.com",
+		"https://www.printables.com/model/48213-filament-dry-box",
+		"https://example.com/x?y=1#z",
+	} {
+		resp, out := c.send(http.MethodPut, path, edits("Linked", "", "", want))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%q: got %d, want 200: %s", want, resp.StatusCode, out)
+		}
+		if got := decodeModel(t, out).SourceURL; got != want {
+			t.Errorf("stored %q, want %q", got, want)
+		}
+	}
+}
+
+// Adding files to a model that already exists - the thing milestone 1 had to
+// apologise for not having. The counts are what the page renders, so they are
+// what this measures.
+func TestAddingFilesToAnExistingModel(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	dir := t.TempDir()
+	ts := newTestServer(t, pool, library.Options{Dir: dir})
+	c := signIn(t, ts, "adder@example.com")
+
+	resp, body := c.upload("Growing", map[string]string{"a.stl": "solid a"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	model := decodeModel(t, body)
+
+	ct, part := filePart(t, "later.gcode", "G28 ; home")
+	resp, body = c.addFile(model.ID, ct, part)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("add file: got %d: %s", resp.StatusCode, body)
+	}
+
+	got := decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", model.ID)))
+	if got.FileCount != 2 || len(got.Files) != 2 {
+		t.Fatalf("fileCount = %d with %d files, want 2 and 2", got.FileCount, len(got.Files))
+	}
+	if want := int64(len("solid a") + len("G28 ; home")); got.TotalSize != want {
+		t.Errorf("totalSize = %d, want %d", got.TotalSize, want)
+	}
+	if final, temp := blobs(t, dir); len(final) != 2 || len(temp) != 0 {
+		t.Errorf("blobs = %v, temp = %v, want 2 and none", final, temp)
+	}
+}
+
+// Deleting a file takes the row *and* the bytes, and leaves the model. Checking
+// only the row would pass while the disk filled up with files nothing points
+// at; checking only the model would pass if the delete never happened.
+func TestDeletingAFileLeavesTheModel(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	dir := t.TempDir()
+	ts := newTestServer(t, pool, library.Options{Dir: dir})
+	c := signIn(t, ts, "filekiller@example.com")
+
+	resp, body := c.upload("Trimmed", map[string]string{
+		"keep.stl": "solid keep", "drop.stl": "solid drop",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	model := decodeModel(t, body)
+	var drop library.File
+	for _, f := range model.Files {
+		if f.Filename == "drop.stl" {
+			drop = f
+		}
+	}
+	if drop.ID == 0 {
+		t.Fatalf("no drop.stl in %+v", model.Files)
+	}
+
+	resp, body = c.send(http.MethodDelete,
+		fmt.Sprintf("/api/models/%d/files/%d", model.ID, drop.ID), "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete file: got %d, want 204: %s", resp.StatusCode, body)
+	}
+
+	got := decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", model.ID)))
+	if got.FileCount != 1 || len(got.Files) != 1 || got.Files[0].Filename != "keep.stl" {
+		t.Fatalf("after delete the model has %+v, want just keep.stl", got.Files)
+	}
+	if got.TotalSize != int64(len("solid keep")) {
+		t.Errorf("totalSize = %d, want %d", got.TotalSize, len("solid keep"))
+	}
+	if final, temp := blobs(t, dir); len(final) != 1 || len(temp) != 0 {
+		t.Errorf("blobs = %v, temp = %v, want 1 and none", final, temp)
+	}
+
+	// Deleting the last one leaves the model behind, empty. That is the point
+	// of keeping models and files separate, and it is the case the detail page
+	// has an empty state for - so `files` has to be present and empty, not
+	// missing.
+	resp, body = c.send(http.MethodDelete,
+		fmt.Sprintf("/api/models/%d/files/%d", model.ID, got.Files[0].ID), "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete last file: got %d: %s", resp.StatusCode, body)
+	}
+	raw := mustGet(t, c, fmt.Sprintf("/api/models/%d", model.ID))
+	if !strings.Contains(raw, `"files":[]`) {
+		t.Errorf("an empty model serves %s, want files as an empty array", raw)
+	}
+	if final, _ := blobs(t, dir); len(final) != 0 {
+		t.Errorf("blobs = %v, want none", final)
+	}
+}
+
+// Deleting a model takes the model, its file rows and every blob. The blobs are
+// the half that a cascade alone would miss: Postgres deletes the rows and
+// nothing on disk.
+func TestDeletingAModelRemovesEverything(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	dir := t.TempDir()
+	ts := newTestServer(t, pool, library.Options{Dir: dir})
+	c := signIn(t, ts, "modelkiller@example.com")
+
+	resp, body := c.upload("Doomed", map[string]string{
+		"a.stl": "solid a", "b.stl": "solid b", "c.gcode": "G28",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	model := decodeModel(t, body)
+	// A second model, to catch a delete that is too enthusiastic about which
+	// rows or which blobs it takes.
+	resp, body = c.upload("Bystander", map[string]string{"z.stl": "solid z"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("second upload: got %d: %s", resp.StatusCode, body)
+	}
+	bystander := decodeModel(t, body)
+
+	resp, body = c.send(http.MethodDelete, fmt.Sprintf("/api/models/%d", model.ID), "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: got %d, want 204: %s", resp.StatusCode, body)
+	}
+
+	if resp, out := c.get(fmt.Sprintf("/api/models/%d", model.ID)); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("the deleted model still reads: got %d: %s", resp.StatusCode, out)
+	}
+	// The files are gone as rows, not just unreachable through their model.
+	for _, f := range model.Files {
+		path := fmt.Sprintf("/api/models/%d/files/%d", model.ID, f.ID)
+		if resp, _ := c.get(path); resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s still downloads: got %d", path, resp.StatusCode)
+		}
+	}
+	if final, temp := blobs(t, dir); len(final) != 1 || len(temp) != 0 {
+		t.Errorf("blobs = %v, temp = %v, want only the bystander's", final, temp)
+	}
+	if got := decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", bystander.ID))); got.FileCount != 1 {
+		t.Errorf("the bystander lost files: %+v", got)
+	}
+
+	// Deleting it twice is a 404, not a 500: the second request is what a
+	// double-click sends.
+	if resp, _ := c.send(http.MethodDelete, fmt.Sprintf("/api/models/%d", model.ID), ""); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("deleting twice: got %d, want 404", resp.StatusCode)
+	}
+}
+
+// The model goes even when its bytes cannot be unlinked.
+//
+// The ordering is deliberate: the database transaction commits first, and only
+// then are the blobs removed. If it were the other way round a failed unlink
+// would abort the delete and leave a model the user cannot get rid of, which is
+// exactly the dead end milestone 1 shipped.
+//
+// A directory with something in it stands in for an unlinkable blob because
+// os.Remove refuses it with ENOTEMPTY for every uid, where chmod games depend
+// on not running as root.
+//
+// What this does *not* prove is the ordering itself - code that unlinked first
+// and swallowed the error would also pass. That part is held by reading the
+// function, and a test for it would be timing luck rather than a measurement.
+func TestDeletedModelSurvivesAnUnlinkableBlob(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	dir := t.TempDir()
+	ts := newTestServer(t, pool, library.Options{Dir: dir})
+	c := signIn(t, ts, "stuck@example.com")
+
+	resp, body := c.upload("Wedged", map[string]string{"a.stl": "solid a"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	model := decodeModel(t, body)
+
+	final, _ := blobs(t, dir)
+	if len(final) != 1 {
+		t.Fatalf("blobs = %v, want exactly one to wedge", final)
+	}
+	blob := filepath.Join(dir, final[0])
+	if err := os.Remove(blob); err != nil {
+		t.Fatalf("remove blob: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(blob, "occupied"), 0o755); err != nil {
+		t.Fatalf("wedge blob: %v", err)
+	}
+
+	resp, body = c.send(http.MethodDelete, fmt.Sprintf("/api/models/%d", model.ID), "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: got %d, want 204: %s", resp.StatusCode, body)
+	}
+	if resp, _ := c.get(fmt.Sprintf("/api/models/%d", model.ID)); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("the model outlived a failed unlink: got %d", resp.StatusCode)
+	}
+	if strings.TrimSpace(mustGet(t, c, "/api/models")) != "[]" {
+		t.Error("the library still lists a model whose blob could not be removed")
+	}
+}
+
+// A download is the stored bytes, offered as a download, under the name the
+// user uploaded.
+func TestDownloadServesTheStoredFile(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	ts := newTestServer(t, pool, library.Options{Dir: t.TempDir()})
+	c := signIn(t, ts, "downloader@example.com")
+
+	const contents = "solid benchy\nfacet normal 0 0 1\nendsolid\n"
+	resp, body := c.upload("Benchy", map[string]string{"benchy.stl": contents})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	model := decodeModel(t, body)
+
+	resp, out := c.get(fmt.Sprintf("/api/models/%d/files/%d", model.ID, model.Files[0].ID))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("download: got %d: %s", resp.StatusCode, out)
+	}
+	if out != contents {
+		t.Errorf("downloaded %q, want %q", out, contents)
+	}
+	// Attachment, and the original filename: a browser that renders an
+	// uploaded file inline is a stored-XSS delivery mechanism, and one that
+	// saves it as "42" is useless.
+	if got := resp.Header.Get("Content-Disposition"); !strings.HasPrefix(got, "attachment") ||
+		!strings.Contains(got, "benchy.stl") {
+		t.Errorf("Content-Disposition = %q", got)
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := resp.Header.Get("Content-Type"); got != model.Files[0].ContentType {
+		t.Errorf("Content-Type = %q, want the stored %q", got, model.Files[0].ContentType)
+	}
+	if got := resp.Header.Get("Content-Length"); got != fmt.Sprint(len(contents)) {
+		t.Errorf("Content-Length = %q, want %d", got, len(contents))
+	}
+}
+
+// The stored content type is sniffed from the bytes, never taken from the
+// client. A forged header is the whole point: a later milestone decides whether
+// a file is a thumbnail from this field, and "the uploader said so" is not
+// something to build that on.
+func TestContentTypeIsSniffedNotTrusted(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	ts := newTestServer(t, pool, library.Options{Dir: t.TempDir()})
+	c := signIn(t, ts, "forger@example.com")
+
+	var buf strings.Builder
+	mw := multipart.NewWriter(&buf)
+	head := make(textproto.MIMEHeader)
+	head.Set("Content-Disposition", `form-data; name="file"; filename="totally.png"`)
+	head.Set("Content-Type", "image/png")
+	w, err := mw.CreatePart(head)
+	if err != nil {
+		t.Fatalf("create part: %v", err)
+	}
+	if _, err := io.WriteString(w, "<script>alert(1)</script>"); err != nil {
+		t.Fatalf("write part: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	resp, body := c.post("Forged", mw.FormDataContentType(), strings.NewReader(buf.String()))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	got := decodeModel(t, body)
+	if len(got.Files) != 1 {
+		t.Fatalf("got %d files", len(got.Files))
+	}
+	if ct := got.Files[0].ContentType; strings.HasPrefix(ct, "image/") {
+		t.Errorf("contentType = %q - the client's claim was believed", ct)
+	}
+	// The domain type still comes from the extension, which is a different
+	// question: "what kind of thing is this in the library" is the user's to
+	// declare by naming the file, where "what bytes are these" is not.
+	if got.Files[0].Type != "image" {
+		t.Errorf("type = %q, want image - the extension decides the domain type", got.Files[0].Type)
+	}
+}
+
+// Everything milestone 2 added, tried against somebody else's model. All of it
+// must be 404 rather than 403: a 403 would confirm the model exists, which is
+// itself something the intruder should not learn.
+func TestAnotherUserCannotTouchAModel(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	dir := t.TempDir()
+	ts := newTestServer(t, pool, library.Options{Dir: dir})
+
+	owner := signIn(t, ts, "owner3@example.com")
+	resp, body := owner.upload("Private", map[string]string{"secret.stl": "solid secret"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("owner upload: got %d: %s", resp.StatusCode, body)
+	}
+	model := decodeModel(t, body)
+	file := fmt.Sprintf("/api/models/%d/files/%d", model.ID, model.Files[0].ID)
+	self := fmt.Sprintf("/api/models/%d", model.ID)
+
+	intruder := signIn(t, ts, "intruder3@example.com")
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodGet, self, ""},
+		{http.MethodPut, self, edits("Stolen", "", "", "")},
+		{http.MethodDelete, self, ""},
+		{http.MethodGet, file, ""},
+		{http.MethodDelete, file, ""},
+	} {
+		resp, out := intruder.send(tc.method, tc.path, tc.body)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s %s: got %d, want 404: %s", tc.method, tc.path, resp.StatusCode, out)
+		}
+	}
+
+	// And none of it touched anything.
+	got := decodeModel(t, mustGet(t, owner, self))
+	if got.Name != "Private" || got.FileCount != 1 {
+		t.Errorf("the owner's model changed: %+v", got)
+	}
+	if final, _ := blobs(t, dir); len(final) != 1 {
+		t.Errorf("blobs = %v, want the owner's one", final)
+	}
+}
+
+// A file id that belongs to a different model is a 404 too. Without the join on
+// model_id the handler would happily delete or serve any file whose owner
+// happens to match, which is the sort of thing that only shows up once two
+// models exist.
+func TestFileIDFromAnotherModelIsNotFound(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	dir := t.TempDir()
+	ts := newTestServer(t, pool, library.Options{Dir: dir})
+	c := signIn(t, ts, "mixer@example.com")
+
+	resp, body := c.upload("First", map[string]string{"a.stl": "solid a"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	first := decodeModel(t, body)
+	resp, body = c.upload("Second", map[string]string{"b.stl": "solid b"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	second := decodeModel(t, body)
+
+	crossed := fmt.Sprintf("/api/models/%d/files/%d", first.ID, second.Files[0].ID)
+	if resp, out := c.get(crossed); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET %s: got %d, want 404: %s", crossed, resp.StatusCode, out)
+	}
+	if resp, out := c.send(http.MethodDelete, crossed, ""); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("DELETE %s: got %d, want 404: %s", crossed, resp.StatusCode, out)
+	}
+	if got := decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", second.ID))); got.FileCount != 1 {
+		t.Errorf("the crossed delete took the other model's file: %+v", got)
 	}
 }
