@@ -1,13 +1,16 @@
 package app_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/robert-crandall/3d-library/internal/library"
 )
 
@@ -850,3 +853,92 @@ func TestTaxonomyNamesAreRefusedWhenEmpty(t *testing.T) {
 // The service and the OpenAPI schema each declare this number; the test needs
 // it too, and a third copy that drifts is worse than a constant.
 const maxTaxonomyNameLen = 60
+
+// A tag can be deleted while a save that names it is in flight, and the two
+// steps of that save - reading the tag and writing the join row - do not hold
+// the tag still between them. The insert's SELECT takes no lock, and the
+// key-share lock the foreign key wants is taken after it, so a delete that
+// commits in that gap turns the write into a 23503 rather than into the
+// row-count mismatch the same-tag-deleted-earlier case produces.
+//
+// The interleaving is forced rather than hoped for: the delete is held open in
+// its own transaction until the save is demonstrably blocked on it. Without the
+// mapping this is a 500 with a Postgres constraint name in it.
+func TestSavingAModelWhoseTagIsDeletedMidSave(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	ts := newTestServer(t, pool, library.Options{Dir: t.TempDir()})
+	c := signIn(t, ts, "midsave@example.com")
+
+	model := uploadModel(c, "Clip")
+	path := fmt.Sprintf("/api/models/%d", model.ID)
+	doomed := decodeLabel(t, mustCreate(t, c, "/api/tags", `{"name":"doomed"}`))
+
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM tags WHERE id = $1`, doomed.ID); err != nil {
+		t.Fatalf("delete the tag: %v", err)
+	}
+
+	done := make(chan struct{})
+	var (
+		code int
+		body string
+	)
+	go func() {
+		defer close(done)
+		var resp *http.Response
+		resp, body = c.send(http.MethodPut, path,
+			assign("Clip", nil, []int64{doomed.ID}, nil))
+		code = resp.StatusCode
+	}()
+
+	// Wait for the save to be waiting on the delete's lock. Polling the server's
+	// own view of who is blocked is the only way to know the save has already
+	// read the tag; a sleep would leave the test asserting whichever ordering
+	// the machine felt like that run.
+	waitForLockWaiter(t, pool, "model_tags")
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit the delete: %v", err)
+	}
+	<-done
+
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("got %d, want 422: %s", code, body)
+	}
+	if !strings.Contains(body, "unknown tag") {
+		t.Errorf("the refusal does not name what went wrong: %s", body)
+	}
+	// And nothing half-applied: the whole save rolled back with the tag.
+	if got := decodeModel(t, mustGet(t, c, path)); got.Name != "Clip" || len(got.Tags) != 0 {
+		t.Errorf("the refused save left something behind: %+v", got)
+	}
+}
+
+// waitForLockWaiter blocks until some backend is waiting on a lock while running
+// a statement mentioning needle.
+func waitForLockWaiter(t *testing.T, pool *pgxpool.Pool, needle string) {
+	t.Helper()
+	ctx := context.Background()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting bool
+		err := pool.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+			                 WHERE wait_event_type = 'Lock'
+			                   AND query ILIKE '%' || $1 || '%'
+			                   AND pid <> pg_backend_pid())`, needle).Scan(&waiting)
+		if err != nil {
+			t.Fatalf("look for a blocked backend: %v", err)
+		}
+		if waiting {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("nothing ever blocked on the tag: the save did not reach the foreign key check")
+}

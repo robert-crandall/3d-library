@@ -89,16 +89,24 @@ class Library {
     }
   }
 
-  /** Show the failure and drop what was on screen. Keeping the old lists would
-   *  offer links to categories that may since have been deleted, next to a
-   *  message saying we do not know what the categories are. */
+  /**
+   * Say what went wrong, and keep a list that was read successfully.
+   *
+   * The two failures are not the same. Nothing has been read yet: there is
+   * nothing to keep, and the sidebar showing categories it never loaded would
+   * be an invention. Something has: the lists were right one action ago, and
+   * emptying them because a refresh blipped would take a working sidebar away
+   * over a request the user did not make and cannot retry - the error stays on
+   * screen either way, so nothing is being hidden by keeping them.
+   */
   #fail(message: string) {
-    this.categories = [];
-    this.tags = [];
-    this.materials = [];
-    this.counts = { models: 0, uncategorized: 0 };
+    if (!this.loaded) {
+      this.categories = [];
+      this.tags = [];
+      this.materials = [];
+      this.counts = { models: 0, uncategorized: 0 };
+    }
     this.error = message;
-    this.loaded = false;
   }
 }
 

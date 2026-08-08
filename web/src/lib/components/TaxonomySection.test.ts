@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const post = vi.fn();
@@ -99,6 +99,43 @@ describe('TaxonomySection', () => {
     post.mockResolvedValue({ data: { id: 9 } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+  });
+
+  // Rename and delete are separate functions with their own try/finally, so the
+  // Add case above says nothing about them. Both leave a dialog or an inline
+  // form open, which is where being stuck is most visible.
+  it('recovers when a rename never reaches the server', async () => {
+    put.mockRejectedValue(new TypeError('Failed to fetch'));
+    open();
+
+    await fireEvent.click(screen.getAllByRole('button', { name: 'Rename' })[0]);
+    await fireEvent.input(screen.getByLabelText('New name for Functional'), {
+      target: { value: 'Practical' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Could not reach the server');
+    put.mockResolvedValue({ data: { id: 3 } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(2));
+  });
+
+  it('recovers when a delete never reaches the server', async () => {
+    del.mockRejectedValue(new TypeError('Failed to fetch'));
+    open();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete Functional' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    // Scoped to the dialog: the section shows the same message behind it, and
+    // the dialog is where the user is looking.
+    const dialog = screen.getByRole('dialog');
+    expect((await within(dialog).findByRole('alert')).textContent).toContain(
+      'Could not reach the server'
+    );
+    del.mockResolvedValue({ data: undefined });
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(del).toHaveBeenCalledTimes(2));
   });
 
   it('renames in place and sends the id it was given', async () => {

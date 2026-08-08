@@ -113,6 +113,22 @@ func isDuplicate(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// isMissingReference reports whether err is a foreign key pointing at a row
+// that is no longer there. 23503 is foreign_key_violation.
+//
+// This is reachable, unlike the same check on the way in. Reading the tag and
+// then writing the join row are two steps: the SELECT that sources the insert
+// takes no lock, and the key-share lock the foreign key needs is taken after
+// it. A tag deleted in the gap - one tab saving a model while another deletes a
+// tag - is visible to the SELECT and gone by the time the constraint looks.
+// Locking the whole taxonomy for the duration of a save would be a large answer
+// to a small question; the right answer is already known, which is that the tag
+// is gone and the save cannot have it, so map the error and say so.
+func isMissingReference(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
 // ListCategories returns the user's categories with the number of root models
 // in each, ordered by name.
 func (s *Service) ListCategories(ctx context.Context, userID int64) ([]CategorySummary, error) {
@@ -510,6 +526,9 @@ func setCategory(ctx context.Context, tx pgx.Tx, userID, modelID int64, category
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE models SET category_id = $2 WHERE id = $1`, modelID, categoryID); err != nil {
+		if isMissingReference(err) {
+			return fmt.Errorf("%w: unknown category", errInvalid)
+		}
 		return fmt.Errorf("library: set category: %w", err)
 	}
 	return nil
@@ -561,6 +580,9 @@ func replaceLabels(ctx context.Context, tx pgx.Tx, userID, modelID int64, ids []
 	}
 
 	tag, err := tx.Exec(ctx, ins, modelID, unique, userID)
+	if isMissingReference(err) {
+		return fmt.Errorf("%w: unknown %s", errInvalid, what)
+	}
 	if err != nil {
 		return fmt.Errorf("library: set %ss: %w", what, err)
 	}

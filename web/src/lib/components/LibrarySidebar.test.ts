@@ -105,20 +105,45 @@ describe('LibrarySidebar', () => {
     expect(href(/Functional/)).toBe('/?categoryId=3');
   });
 
-  // A stale list is worse than a missing one: it would be a category tree the
-  // user could click, filtering by things that may no longer exist. Driving the
-  // failure through refresh() rather than assigning `error` is the point - the
-  // question is what a failed read leaves on screen, not what the flag renders.
-  it('drops what it was showing when the taxonomy could not be read', async () => {
+  // Driving the failure through refresh() rather than assigning `error` is the
+  // point: the question is what a failed read leaves on screen, not what the
+  // flag renders. Nothing has been read yet here, so there is nothing to keep,
+  // and a sidebar listing categories it never loaded would be an invention.
+  it('shows nothing but the failure when the first read fails', async () => {
     url = new URL('http://localhost/');
-    fill();
+    library.reset();
     get.mockRejectedValueOnce(new TypeError('Failed to fetch'));
     await library.refresh();
     render(LibrarySidebar);
 
     expect(screen.getByRole('alert').textContent).toContain('Could not reach the server');
     expect(screen.queryByRole('link', { name: /Functional/ })).toBeNull();
-    expect(screen.queryByRole('link', { name: /petg/ })).toBeNull();
+    library.reset();
+  });
+
+  // The other half. Once a read has succeeded the lists were right an action
+  // ago, and there is no retry on the sidebar: emptying them because one later
+  // refresh blipped would take a working category tree away for the rest of the
+  // session. The alert is on screen either way, so nothing is being hidden.
+  it('keeps the lists it did read when a later refresh fails', async () => {
+    url = new URL('http://localhost/');
+    library.reset();
+    get.mockImplementation((path: unknown) =>
+      Promise.resolve(
+        String(path) === '/api/categories'
+          ? { data: [{ id: 3, name: 'Functional', color: '#3b82f6', modelCount: 12 }] }
+          : { data: [] }
+      )
+    );
+    await library.refresh();
+
+    get.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    await library.refresh();
+    render(LibrarySidebar);
+
+    expect(screen.getByRole('alert').textContent).toContain('Could not reach the server');
+    expect(screen.getByRole('link', { name: /Functional/ })).toBeTruthy();
+    get.mockImplementation((..._args: unknown[]) => Promise.resolve({ data: [] as unknown }));
     library.reset();
   });
 
@@ -140,6 +165,33 @@ describe('LibrarySidebar', () => {
     answers.slice(0, 4).forEach((resolve) => resolve({ data: [{ id: 3, name: 'Functional', color: '#3b82f6', modelCount: 12 }] }));
     await stale;
 
+    expect(library.categories.map((c) => c.name)).toEqual(['Toys']);
+    get.mockImplementation((..._args: unknown[]) => Promise.resolve({ data: [] as unknown }));
+    library.reset();
+  });
+
+  // The same, for the refresh that fails rather than answers. A stale rejection
+  // must not put an error over a list that loaded fine afterwards.
+  it('ignores an older refresh that fails after a newer one succeeded', async () => {
+    library.reset();
+    const failures: ((reason: unknown) => void)[] = [];
+    get.mockImplementation(
+      () => new Promise<{ data: unknown }>((_resolve, reject) => failures.push(reject))
+    );
+
+    const stale = library.refresh();
+    get.mockImplementation((path: unknown) =>
+      Promise.resolve(
+        String(path) === '/api/categories'
+          ? { data: [{ id: 4, name: 'Toys', color: '#ec4899', modelCount: 2 }] }
+          : { data: [] }
+      )
+    );
+    await library.refresh();
+    failures.forEach((reject) => reject(new TypeError('Failed to fetch')));
+    await stale;
+
+    expect(library.error).toBe('');
     expect(library.categories.map((c) => c.name)).toEqual(['Toys']);
     get.mockImplementation((..._args: unknown[]) => Promise.resolve({ data: [] as unknown }));
     library.reset();
