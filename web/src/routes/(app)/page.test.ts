@@ -120,6 +120,42 @@ describe('library page', () => {
     vi.unstubAllGlobals();
   });
 
+  // The reload is what settles whether the model exists, so Upload has to stay
+  // shut for its whole duration - not only on the very first load. Otherwise
+  // there is a window, right after asking for the reload, where the user can
+  // upload the same model a second time.
+  it('does not offer Upload while the confirming reload is in flight', async () => {
+    get.mockResolvedValue({ data: [] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch')))
+    );
+
+    render(LibraryPage);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Upload your first model' }));
+    const dialog = screen.getByRole('form', { name: 'Upload a model' });
+    await fireEvent.change(within(dialog).getByLabelText('Files'), {
+      target: { files: [new File(['solid'], 'clip.stl')] }
+    });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Upload' }));
+
+    let finishReload!: (value: unknown) => void;
+    get.mockImplementation(() => new Promise((resolve) => (finishReload = resolve)));
+    await fireEvent.click(await within(dialog).findByRole('button', { name: 'Reload library' }));
+
+    expect((screen.getByRole('button', { name: 'Upload' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+
+    finishReload({ data: [] });
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Upload' }) as HTMLButtonElement).disabled).toBe(
+        false
+      )
+    );
+    vi.unstubAllGlobals();
+  });
+
   it('opens the upload dialog from the header button', async () => {
     get.mockResolvedValue({ data: [model] });
     render(LibraryPage);

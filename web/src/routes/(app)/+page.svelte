@@ -22,6 +22,11 @@
   // fast GET and removes both.
 
   async function load() {
+    // Back to loading for the duration, not just on the first call. Without
+    // this a reload keeps the page in `ready` while the GET is in flight, which
+    // leaves Upload enabled over a library that is being re-read precisely
+    // because nobody knows what is in it.
+    status = 'loading';
     error = '';
     try {
       const { data, error: failure } = await api.GET('/api/models');
