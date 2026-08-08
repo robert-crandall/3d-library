@@ -38,7 +38,53 @@ describe('UploadDialog', () => {
     expect(dialog.getAttribute('aria-labelledby')).toBe('upload-title');
   });
 
-  // Two files can share a basename - different folders, or a rename that only
+  // aria-modal is a promise that the rest of the page is unreachable. These
+  // three tests are that promise: focus starts inside, Tab does not leave, and
+  // Escape is the way out.
+  it('puts focus in the dialog when it opens', () => {
+    render(UploadDialog, { onclose: vi.fn(), onuploaded: vi.fn() });
+
+    expect(document.activeElement).toBe(screen.getByLabelText('Name'));
+  });
+
+  it('keeps Tab inside the dialog', async () => {
+    render(UploadDialog, { onclose: vi.fn(), onuploaded: vi.fn() });
+
+    const name = screen.getByLabelText('Name');
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+
+    // Upload is disabled with an empty queue, so Cancel is the last stop.
+    cancel.focus();
+    await fireEvent.keyDown(window, { key: 'Tab' });
+    expect(document.activeElement).toBe(name);
+
+    await fireEvent.keyDown(window, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(cancel);
+  });
+
+  it('closes on Escape, but not mid-upload', async () => {
+    const onclose = vi.fn();
+    let finish!: () => void;
+    mocked.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ model: { id: 1, name: 'A', fileCount: 1 } as never, failed: [] });
+        })
+    );
+
+    render(UploadDialog, { onclose, onuploaded: vi.fn() });
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onclose).toHaveBeenCalledTimes(1);
+
+    await pickAFile();
+    await submit();
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onclose).toHaveBeenCalledTimes(1);
+
+    finish();
+  });
+
   // changed the path. Keying the list on the filename made Svelte treat them as
   // the same row, so one file's progress overwrote the other's.
   it('gives same-named files their own rows', async () => {

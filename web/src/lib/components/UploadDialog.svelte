@@ -109,16 +109,48 @@
       busy = false;
     }
   }
+  // The dialog claims aria-modal, so it has to behave like one: focus starts
+  // inside it, Tab stays inside it, and Escape leaves. A native <dialog> would
+  // give all three away for free, but jsdom does not implement showModal(), so
+  // that version could not be tested. Everything focusable here is an <input>
+  // or a <button>, so the query does not need to be more clever than that.
+  let box: HTMLElement | undefined = $state();
+
+  $effect(() => {
+    box?.querySelector<HTMLElement>('input')?.focus();
+  });
+
+  function keydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      // Escape does whatever the dismissing button would have done, including
+      // doing nothing while that button is disabled mid-upload.
+      if (done) onclose({ reload: unresolved });
+      else if (!busy) onclose();
+      return;
+    }
+    if (event.key !== 'Tab' || !box) return;
+
+    const stops = [...box.querySelectorAll<HTMLInputElement>('input, button')].filter(
+      (el) => !el.disabled
+    );
+    const edge = event.shiftKey ? stops[0] : stops[stops.length - 1];
+    if (!edge || document.activeElement !== edge) return;
+    event.preventDefault();
+    (event.shiftKey ? stops[stops.length - 1] : stops[0]).focus();
+  }
 </script>
+
+<svelte:window onkeydown={keydown} />
 
 <!--
   A modal over the grid rather than its own route: uploading is a thing you do
   *to* the library, and coming back to a re-fetched list would lose the scroll
   position the user was at.
 
-  Native <dialog> is not used because it needs an effect to call showModal(),
-  and the one thing it buys - focus trapping - is not worth that when the
-  content is three controls. The roles it would have set are set by hand.
+  Native <dialog> is not used because jsdom does not implement showModal(), so
+  the focus behaviour it hands you could not be tested. It is done by hand
+  instead, in the script above.
 
   The file list is deliberately unkeyed: it is built once by `pick`, replaced
   entry-by-entry at the same index as uploads progress, and never reordered or
@@ -128,6 +160,7 @@
 -->
 <div class="fixed inset-0 grid place-items-center bg-black/40 p-4">
   <div
+    bind:this={box}
     class="w-full max-w-md rounded-tile border border-line bg-surface p-5"
     role="dialog"
     aria-modal="true"
