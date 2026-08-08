@@ -93,8 +93,13 @@ export async function loadToolpath(url: string, options: LoadOptions = {}): Prom
       }
     }
   } finally {
-    // Releasing the lock lets an aborted body be collected rather than held by a reader
-    // nobody will read again.
+    // A parser error - the segment cap, a line over a megabyte, binary G-code - leaves
+    // the rest of the body still arriving, and at 256 MB that is worth stopping. Only
+    // `cancel` stops it; releasing the lock does not. Unconditional because cancelling
+    // an already-closed stream is defined to be a no-op, so the success path needs no
+    // flag to skip it. The `catch` is for a stream that has already errored, where
+    // `cancel` rejects - not a failure worth reporting over the one being thrown.
+    void reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 

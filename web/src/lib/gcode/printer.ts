@@ -21,15 +21,17 @@ export type Volume = {
   readonly originY: number;
 };
 
+type DeclaredBed = {
+  readonly minXMm: number;
+  readonly minYMm: number;
+  readonly maxXMm: number;
+  readonly maxYMm: number;
+  readonly heightMm: number;
+};
+
 export type PrinterMeta = {
   readonly printerModel?: string;
-  readonly buildVolume?: {
-    readonly minXMm: number;
-    readonly minYMm: number;
-    readonly maxXMm: number;
-    readonly maxYMm: number;
-    readonly heightMm: number;
-  };
+  readonly buildVolume?: DeclaredBed;
   readonly filamentColor?: string;
 };
 
@@ -76,7 +78,7 @@ export function resolvePrinter(meta: PrinterMeta | undefined): Printer {
   // The file's own configuration beats any table: it is what the slicer was actually
   // set to, including a bed the owner has modified.
   const declared = meta?.buildVolume;
-  if (declared) {
+  if (declared && plausible(declared)) {
     return {
       // The server reports the bed's corners rather than its size, because a bed_shape
       // does not have to start at the origin - a delta's is centred on it.
@@ -104,6 +106,30 @@ export function resolvePrinter(meta: PrinterMeta | undefined): Printer {
   }
 
   return { volume: DEFAULT_VOLUME, model, known: false };
+}
+
+/**
+ * Ten metres, which is not a printer. The server already rejects a bed_shape that is
+ * not finite, but `1e300` is finite, and a hand-edited profile is where such a number
+ * would come from. The plate goes to the GPU as Float32, so anything past ~3.4e38
+ * becomes Infinity there and takes the camera fit to NaN - a blank panel with nothing
+ * said. Falling back to the assumed volume at least draws the print.
+ */
+const MAX_BED_MM = 10_000;
+
+function plausible(bed: DeclaredBed): boolean {
+  const x = bed.maxXMm - bed.minXMm;
+  const y = bed.maxYMm - bed.minYMm;
+  return (
+    x > 0 &&
+    y > 0 &&
+    bed.heightMm > 0 &&
+    x <= MAX_BED_MM &&
+    y <= MAX_BED_MM &&
+    bed.heightMm <= MAX_BED_MM &&
+    Math.abs(bed.minXMm) <= MAX_BED_MM &&
+    Math.abs(bed.minYMm) <= MAX_BED_MM
+  );
 }
 
 /** `Bambu Lab X1 Carbon · 256³` - design 1c's lower readout line. */

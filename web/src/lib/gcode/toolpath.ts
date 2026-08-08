@@ -181,10 +181,16 @@ const ARC_NO_CENTRE = 'This file has a G2/G3 arc with no I or J offset.';
 const MODAL_MOTION =
   'This file uses modal motion (coordinates with no G0/G1 in front of them), which this viewer cannot read.';
 const NOT_A_NUMBER = 'This file has a coordinate that is not a number.';
+const COORDINATE_TOO_LARGE = 'This file has a coordinate too large to draw.';
 const LINE_TOO_LONG = 'This file is not text, or has a single line longer than a megabyte.';
 
 function tooManySegments(cap: number): string {
   return `This file has more than ${cap.toLocaleString()} moves, which is more than this viewer can draw.`;
+}
+
+/** Whether every component survives the Float32Array the geometry is built from. */
+function finiteAsFloat32(v: readonly number[]): boolean {
+  return v.every((n) => Number.isFinite(Math.fround(n)));
 }
 
 function tooManyLayers(cap: number): string {
@@ -214,6 +220,8 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
   const decoder = new TextDecoder();
   let carry = '';
   let firstPush = true;
+  /** The first few bytes of the file, only until there are enough to test the magic. */
+  const magic: number[] = [];
 
   // Machine state. `offset` is physical minus declared: `G92 X10` renames the position
   // the nozzle is already at, so every later absolute X is displaced by the difference.
@@ -250,6 +258,10 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
   let openLayer: ToolpathLayer | null = null;
   let openPhysicalZ = 0;
   let purgeSegments = 0;
+  // Travel count at the last layer marker; see `handleComment`. `null` means no marker is
+  // waiting, so a close that is not a layer change - the end of the file - takes every
+  // travel emitted, including the final wipe and park.
+  let travelAtMarker: number | null = null;
   // Bounds of the print, purge excluded. Widened per emitted point rather than measured
   // in a second pass; see `Toolpath.bounds`.
   const min: [number, number, number] = [Infinity, Infinity, Infinity];
@@ -287,18 +299,19 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
 
   function push(bytes: Uint8Array): void {
     if (firstPush) {
-      firstPush = false;
       // Binary G-code is heatshrink-compressed and starts `GCDE`. Without this it
       // scans as a few thousand junk words and reports "no toolpaths", which sends the
       // reader looking for a problem with their model.
-      if (
-        bytes.length >= 4 &&
-        bytes[0] === 0x47 &&
-        bytes[1] === 0x43 &&
-        bytes[2] === 0x44 &&
-        bytes[3] === 0x45
-      ) {
-        throw new Error(BINARY_GCODE);
+      //
+      // A stream is free to hand over fewer than four bytes first, so the check waits
+      // rather than skipping - a `firstPush` cleared unconditionally would let a
+      // two-byte opening chunk slip a binary file past.
+      magic.push(...bytes.subarray(0, 4 - magic.length));
+      if (magic.length >= 4) {
+        firstPush = false;
+        if (magic[0] === 0x47 && magic[1] === 0x43 && magic[2] === 0x44 && magic[3] === 0x45) {
+          throw new Error(BINARY_GCODE);
+        }
       }
     }
 
@@ -322,9 +335,19 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
       handleLine(carry, 0, carry.length);
       carry = '';
     }
+    // A marker with no extrusion after it never opens a layer, so there is no new layer
+    // to hand the trailing end block to. It stays with the last one that printed.
+    travelAtMarker = null;
     closeLayer();
     if (extrusionSegments === 0) {
       throw new Error(NO_TOOLPATHS);
+    }
+    if (!finiteAsFloat32(min) || !finiteAsFloat32(max)) {
+      // A coordinate large enough to overflow a float32 - not something a slicer emits,
+      // but a corrupt or truncated file can. It reaches the GPU as Infinity, which makes
+      // the camera fit NaN and the panel silently blank, so refuse it here where there is
+      // still something to say.
+      throw new Error(COORDINATE_TOO_LARGE);
     }
     return {
       extrusion: trim(extrusion, extrusionSegments),
@@ -672,6 +695,12 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
     if (LAYER_MARKERS.has(upper) || (upper.startsWith('LAYER:') && upper.length > 6)) {
       pending = true;
       sawMarker = true;
+      // The layer does not close until the next extrusion, because that is the first
+      // point the new layer's Z is known. Everything between here and there is the
+      // layer change itself - lift, wipe, reposition - and belongs to the layer being
+      // moved *to*. Recording the count now is what keeps those travels from being
+      // drawn on the layer below them.
+      travelAtMarker = travelSegments;
       return;
     }
     if (upper.startsWith('Z:')) {
@@ -754,7 +783,8 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
   function closeLayer(): void {
     if (openLayer === null) return;
     openLayer.extrusionEnd = extrusionSegments;
-    openLayer.travelEnd = travelSegments;
+    openLayer.travelEnd = travelAtMarker ?? travelSegments;
+    travelAtMarker = null;
     openLayer = null;
   }
 

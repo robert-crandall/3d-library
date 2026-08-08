@@ -16,19 +16,25 @@ export type PreviewKind = 'mesh' | 'gcode';
 /**
  * What can draw this file, if anything.
  *
- * `type` is the server's vocabulary from `internal/library.fileTypes`, derived from the
- * extension at upload time. `.bgcode` is deliberately absent: it is heatshrink-compressed
- * binary, `internal/gcode` already declines to read it, and the honest panel for it says
- * so rather than showing an empty plate.
+ * `file.type` is the server's vocabulary from `internal/library.fileTypes`, derived from
+ * the extension at upload time. It is not enough on its own: that table maps `.bgcode` to
+ * `"gcode"` alongside `.gcode`, `.gco` and `.g`, so the type cannot tell the two apart.
+ * Binary G-code is heatshrink-compressed and `internal/gcode` already declines to read it,
+ * so the filename decides. Without this the panel downloads the whole file - up to
+ * `MAX_GCODE_BYTES` of it - to learn from the first four bytes what its name already said.
  */
-export function previewKind(type: string): PreviewKind | undefined {
-  if (type === 'stl' || type === '3mf') return 'mesh';
-  if (type === 'gcode') return 'gcode';
+export function previewKind(file: ModelFile): PreviewKind | undefined {
+  if (file.type === 'stl' || file.type === '3mf') return 'mesh';
+  if (file.type === 'gcode') return isBinaryGcode(file.filename) ? undefined : 'gcode';
   return undefined;
 }
 
+function isBinaryGcode(filename: string): boolean {
+  return filename.toLowerCase().endsWith('.bgcode');
+}
+
 export function hasPreview(files: readonly ModelFile[]): boolean {
-  return files.some((file) => previewKind(file.type) !== undefined);
+  return files.some((file) => previewKind(file) !== undefined);
 }
 
 /**
@@ -49,7 +55,8 @@ export function hasPreview(files: readonly ModelFile[]): boolean {
  * upload order wearing a disguise.
  */
 export function defaultFile(files: readonly ModelFile[]): ModelFile | undefined {
-  return pick(files.filter(drawable)) ?? pick(files);
+  const viewable = files.filter((file) => previewKind(file) !== undefined);
+  return pick(viewable.filter(drawable)) ?? pick(viewable);
 }
 
 function pick(files: readonly ModelFile[]): ModelFile | undefined {
@@ -62,7 +69,7 @@ function pick(files: readonly ModelFile[]): ModelFile | undefined {
 
 /** Whether the viewer for this file would draw it rather than refuse it on size. */
 function drawable(file: ModelFile): boolean {
-  const kind = previewKind(file.type);
+  const kind = previewKind(file);
   if (kind === 'mesh') return file.size <= MAX_PREVIEW_BYTES;
   if (kind === 'gcode') return file.size <= MAX_GCODE_BYTES;
   return false;

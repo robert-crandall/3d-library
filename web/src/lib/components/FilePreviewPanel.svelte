@@ -25,7 +25,7 @@
   // them, and picking a .jpg has to be a selection that sticks rather than one that
   // silently snaps back to the mesh.
   const selected = $derived(files.find((file) => file.id === selectedId) ?? defaultFile(files));
-  const kind = $derived(selected ? previewKind(selected.type) : undefined);
+  const kind = $derived(selected ? previewKind(selected) : undefined);
 </script>
 
 <section class="rounded-tile border border-line bg-surface" data-testid="preview-panel">

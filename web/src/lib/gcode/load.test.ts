@@ -170,4 +170,45 @@ describe('loadToolpath', () => {
     const toolpath = await loadToolpath('/f.gcode');
     expect(toolpath.extrusionSegments).toBe(2);
   });
+
+  it('cancels the download when the parser gives up on the file', async () => {
+    // Releasing the reader's lock does not stop the body arriving; only `cancel` does.
+    // The parser gives up part-way through for real reasons - the segment cap, a line
+    // over a megabyte, binary G-code - and at 256 MB the rest of a file nobody will
+    // draw is worth stopping.
+    let cancelled = false;
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('GCDE\x00\x01\x02\x03'));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    stub(new Response(body));
+    await expect(loadToolpath('/f.gcode')).rejects.toThrow(/binary G-code/);
+    expect(cancelled).toBe(true);
+  });
+
+  it('does not cancel a body that finished on its own', async () => {
+    // The unconditional `cancel` in the loader's `finally` leans on the streams spec
+    // saying a cancel of an already-closed stream never reaches the underlying source.
+    // If that were wrong, every successful load would look to the server like a client
+    // that gave up on a file it in fact read completely.
+    let cancelled = false;
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(PRINT));
+        controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    stub(new Response(body));
+    await loadToolpath('/f.gcode');
+    expect(cancelled).toBe(false);
+  });
 });

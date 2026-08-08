@@ -164,6 +164,23 @@ describe('toolpathColor', () => {
     expect(printer.volume).toEqual({ x: 210, y: 210, z: 300, originX: -105, originY: -105 });
   });
 
+  it.each([
+    { name: 'a bed wider than ten metres', bed: { maxXMm: 1e300 } },
+    { name: 'a bed taller than ten metres', bed: { heightMm: 1e300 } },
+    { name: 'an origin further than ten metres out', bed: { minXMm: -1e300, maxXMm: 1e300 } },
+  ])('assumes a volume rather than believing $name', ({ bed }) => {
+    // `1e300` is finite, so the server's own finite check passes it, but the plate goes
+    // to the GPU as Float32 where anything past ~3.4e38 is Infinity - and the camera fit
+    // then divides into NaN and the panel draws nothing, silently. A hand-edited printer
+    // profile with a fat-fingered bed_shape is where such a number comes from.
+    const printer = resolvePrinter({
+      printerModel: 'Some Machine',
+      buildVolume: { minXMm: 0, minYMm: 0, maxXMm: 250, maxYMm: 210, heightMm: 210, ...bed },
+    });
+    expect(printer.known).toBe(false);
+    expect(printer.volume.x).toBeLessThanOrEqual(10_000);
+    expect(printer.volume.z).toBeLessThanOrEqual(10_000);
+  });
 });
 
 /** Relative lightness in the same sense `printer.ts` clamps it: the HSL L channel. */

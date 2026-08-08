@@ -575,11 +575,13 @@ func splitAtLine(raw []byte, at int) (head, tail []byte) {
 // six real fixtures do not: a delta's polygon, a bed with no height limit, and
 // the malformed values a hand-edited profile can leave behind.
 //
-// The viewer draws a plate from this, so "not a rectangle" has to be reported
-// rather than rounded up into one: a delta's bed_shape is a many-sided
-// approximation of a circle, and its bounding rectangle is a plate the shape of
-// a bed nobody owns. The envelope numbers stay, because the readout can still
-// honestly say how big the machine is.
+// A delta's bed_shape is a many-sided approximation of a circle, and what comes
+// back for it is its bounding box - both the extent and the origin, since a
+// delta's polygon is centred on zero and so runs negative. The viewer draws that
+// box as the plate, which is wrong in the corners for a round bed and right
+// everywhere the print actually is; a plate at the origin instead would sit
+// beside the toolpaths rather than under them, which is the failure worth
+// avoiding first. Drawing the polygon itself is the follow-up.
 func TestParseBuildVolume(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

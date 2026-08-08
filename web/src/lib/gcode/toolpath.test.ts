@@ -194,6 +194,41 @@ describe('layer detection', () => {
     expect(parsed.layers.at(-1)?.extrusionEnd).toBe(parsed.extrusionSegments);
     expect(parsed.layers.at(-1)?.travelEnd).toBe(parsed.travelSegments);
   });
+
+  it('gives the layer-change travel to the layer it moves to', () => {
+    // A layer does not close until the next extrusion, because that is the first point
+    // the new Z is known - so the lift and reposition after the marker are emitted while
+    // the layer below is still open. Taking the travel count at close time therefore put
+    // them on the wrong layer, and with travel shown, layer one drew a line hanging at
+    // layer two's Z. Only an intermediate layer can catch this: the last layer holds
+    // every travel either way, which is all the test above asserts.
+    const parsed = parse(
+      [
+        PRIMED,
+        ';LAYER_CHANGE',
+        'G1 Z0.4', // travel 1 - belongs to layer two
+        'G1 X9 Y9', // travel 2 - belongs to layer two
+        'G1 X10 Y9 E2',
+        ';LAYER_CHANGE',
+        'G1 Z0.6',
+        'G1 X2 E3',
+      ].join('\n'),
+    );
+    expect(parsed.layers).toHaveLength(3);
+    expect(parsed.layers[0].travelEnd).toBe(0);
+    expect(parsed.layers[1].travelEnd).toBe(2);
+    expect(parsed.layers.at(-1)?.travelEnd).toBe(parsed.travelSegments);
+  });
+
+  it('leaves the end block with the last layer that printed', () => {
+    // `;LAYER_CHANGE` then a park with no extrusion after it opens no new layer, so there
+    // is nothing to hand the trailing travel to. Dropping it instead would leave segments
+    // no layer can reach, and the top of the slider would stop showing the wipe.
+    const parsed = parse([PRIMED, ';LAYER_CHANGE', 'G1 X0 Y200'].join('\n'));
+    expect(parsed.layers).toHaveLength(1);
+    expect(parsed.layers[0].travelEnd).toBe(parsed.travelSegments);
+    expect(parsed.travelSegments).toBe(1);
+  });
 });
 
 describe('positioning', () => {
@@ -501,6 +536,28 @@ describe('refusals', () => {
     const parser = createToolpathParser();
     expect(() => parser.push(new Uint8Array([0x47, 0x43, 0x44, 0x45, 0, 1, 2, 3]))).toThrow(
       /binary G-code/,
+    );
+  });
+
+  it.each([1, 2, 3])('refuses binary G-code split across chunks after %i byte(s)', (split) => {
+    // A network read has no obligation to hand over four bytes at once, and a body under
+    // four bytes long is legal. Checking only the first chunk therefore let a .bgcode
+    // through on a short read, and it then failed as "no toolpaths" instead - the exact
+    // misleading message the magic check exists to prevent.
+    const parser = createToolpathParser();
+    const magic = new Uint8Array([0x47, 0x43, 0x44, 0x45, 0, 1, 2, 3]);
+    parser.push(magic.subarray(0, split));
+    expect(() => parser.push(magic.subarray(split))).toThrow(/binary G-code/);
+  });
+
+  it('refuses a coordinate too large to hold in the geometry', () => {
+    // Positions go to the GPU as Float32, where anything past ~3.4e38 becomes Infinity;
+    // the camera fit then divides into NaN and the panel goes blank with no message,
+    // which is the worst way to fail. Written-out digits, not `1e40` - the number scanner
+    // stops at the `e`, correctly, because G-code has no exponent notation.
+    const huge = `1${'0'.repeat(40)}`;
+    expect(() => parse(['G90', 'M83', 'G1 X0 Y0 Z0.2', `G1 X${huge} E1`].join('\n'))).toThrow(
+      /coordinate too large/,
     );
   });
 

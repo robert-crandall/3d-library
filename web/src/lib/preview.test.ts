@@ -18,18 +18,28 @@ function make(filename: string, type: string, size = 1_000): ModelFile {
 
 describe('previewKind', () => {
   it.each([
-    ['stl', 'mesh'],
-    ['3mf', 'mesh'],
-    ['gcode', 'gcode'],
-  ])('draws %s with the %s viewer', (type, kind) => {
-    expect(previewKind(type)).toBe(kind);
+    ['part.stl', 'stl', 'mesh'],
+    ['proj.3mf', '3mf', 'mesh'],
+    ['plate.gcode', 'gcode', 'gcode'],
+  ])('draws %s with the %s viewer', (filename, type, kind) => {
+    expect(previewKind(make(filename, type))).toBe(kind);
   });
 
-  it.each(['bgcode', 'image', 'zip', 'other'])('has no viewer for %s', (type) => {
-    // `.bgcode` especially: it is G-code by name and heatshrink-compressed binary in
-    // fact, so routing it to the G-code viewer would show an empty plate rather than
-    // saying the file cannot be previewed.
-    expect(previewKind(type)).toBeUndefined();
+  it.each(['front.jpg,image', 'bundle.zip,zip', 'notes.txt,other'])(
+    'has no viewer for %s',
+    (spec) => {
+      const [filename, type] = spec.split(',');
+      expect(previewKind(make(filename, type))).toBeUndefined();
+    },
+  );
+
+  it.each(['plate.bgcode', 'PLATE.BGCODE'])('has no viewer for %s', (filename) => {
+    // The decisive case for classifying on the filename rather than the type. The server
+    // maps `.bgcode` to type `gcode` in the same table entry as `.gcode`, so a test that
+    // passes type `bgcode` is testing a value the API never sends: it would pass whether
+    // or not the bug were present. Routing this to the G-code viewer downloads the whole
+    // file to discover from its first four bytes what its name already said.
+    expect(previewKind(make(filename, 'gcode'))).toBeUndefined();
   });
 });
 
@@ -38,6 +48,10 @@ describe('hasPreview', () => {
     // This is what keeps three.js - the largest thing in the bundle - unfetched for a
     // model that has nothing to draw.
     expect(hasPreview([make('front.jpg', 'image'), make('notes.txt', 'other')])).toBe(false);
+  });
+
+  it('is false for a model whose only G-code is binary', () => {
+    expect(hasPreview([make('plate.bgcode', 'gcode')])).toBe(false);
   });
 
   it('is true as soon as one file can be drawn', () => {
@@ -93,5 +107,16 @@ describe('defaultFile', () => {
 
   it('is undefined when nothing in the model can be drawn', () => {
     expect(defaultFile([make('front.jpg', 'image')])).toBeUndefined();
+  });
+
+  it('does not open on binary G-code even when it is the only G-code there', () => {
+    // The fallback that opens on an undrawable file so the panel can say why must not
+    // reach a file no viewer claims at all.
+    expect(defaultFile([make('plate.bgcode', 'gcode')])).toBeUndefined();
+  });
+
+  it('opens on the plain G-code beside a binary one', () => {
+    const files = [make('plate.bgcode', 'gcode'), make('plate.gcode', 'gcode')];
+    expect(defaultFile(files)?.filename).toBe('plate.gcode');
   });
 });
