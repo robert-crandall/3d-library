@@ -73,7 +73,12 @@
       </a>
     </nav>
 
-    <LibraryError class="px-3" />
+    <!-- Settings shows this failure itself, right above the lists it makes
+         wrong, and two copies of one alert is two announcements and two
+         identical Try again buttons. The screen the user is acting on wins. -->
+    {#if page.url.pathname !== '/settings'}
+      <LibraryError class="px-3" />
+    {/if}
 
     {#if library.categories.length > 0}
       <nav aria-label="Categories">

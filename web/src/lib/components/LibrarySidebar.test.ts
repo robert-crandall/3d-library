@@ -147,6 +147,19 @@ describe('LibrarySidebar', () => {
     library.reset();
   });
 
+  // Settings renders the same failure over the lists it makes wrong, and the
+  // sidebar is on screen beside it. A weaker test would not notice the two
+  // announcements and the two identical Try again buttons.
+  it('leaves the failure to Settings when Settings is showing', () => {
+    url = new URL('http://localhost/settings');
+    fill();
+    library.error = 'Could not reach the server.';
+    render(LibrarySidebar);
+
+    expect(screen.queryByRole('alert')).toBeNull();
+    library.error = '';
+  });
+
   // The sequence that makes keeping a stale list safe. Deleting a category
   // succeeds, the refresh behind it fails, and the sidebar is now showing a
   // category the server no longer has. Nothing else on the screen re-reads the
