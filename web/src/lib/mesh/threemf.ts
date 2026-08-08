@@ -383,6 +383,12 @@ export function parse3mf(buffer: ArrayBuffer): ParsedMesh {
     visiting.add(key);
 
     const part = loadPart(partPath);
+    // Not something the spec forbids, but not something any slicer emits either, and
+    // getting it right means carrying each part's unit through the transform composition:
+    // a child's vertices are in the child's unit while the translation placing it is in
+    // the parent's. Refusing is the honest answer until a real file needs the machinery -
+    // a single global scale would show one object 25.4x its true size next to another and
+    // report a dimension that is true of neither.
     if (unitOf(part) !== scale) {
       throw new Error('This 3MF mixes units between its parts.');
     }

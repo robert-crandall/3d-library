@@ -70,6 +70,19 @@ describe('parseStl', () => {
     );
   });
 
+  it('refuses an ASCII file cut off on a triangle boundary', () => {
+    // The nastier truncation: cut between facets and every triangle that survives is
+    // complete, so the vertex count still divides by nine and the file parses into a
+    // model that is a proper subset of the real one - wrong shape, wrong dimensions, no
+    // error. `endsolid` is the only thing that says the file finished.
+    const text = new TextDecoder().decode(asciiStl(BOX));
+    const cut = text.slice(0, text.indexOf('endfacet') + 'endfacet\n'.length);
+    expect(cut).toContain('endfacet');
+    expect(() => parseStl(new TextEncoder().encode(cut).buffer as ArrayBuffer)).toThrow(
+      /corrupt or truncated/,
+    );
+  });
+
   it('refuses an ASCII file with a non-numeric coordinate', () => {
     const text = new TextDecoder()
       .decode(asciiStl(BOX))

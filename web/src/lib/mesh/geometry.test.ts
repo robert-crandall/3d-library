@@ -57,7 +57,7 @@ function frustumFit(
   fovDegrees: number,
   aspect: number,
   distance: number,
-): { worst: number; behindCamera: boolean } {
+): { worst: number; behindCamera: boolean; nearest: number } {
   const tanV = Math.tan((fovDegrees * Math.PI) / 360);
   const tanH = tanV * aspect;
   const center = centerOf(boundsOf(positions));
@@ -74,6 +74,7 @@ function frustumFit(
 
   let worst = 0;
   let behindCamera = false;
+  let nearest = Infinity;
   for (let i = 0; i < positions.length; i += 3) {
     const x = positions[i] - center[0];
     const y = positions[i + 1] - center[1];
@@ -81,6 +82,7 @@ function frustumFit(
     // The camera sits at `distance` along +forward looking back down it, so a vertex's
     // depth is what is left after its own projection onto that axis.
     const depth = distance - (x * f[0] + y * f[1] + z * f[2]);
+    nearest = Math.min(nearest, depth);
     if (depth <= 0) {
       behindCamera = true;
       continue;
@@ -89,7 +91,7 @@ function frustumFit(
     const down = Math.abs(x * u[0] + y * u[1] + z * u[2]) / (tanV * depth);
     worst = Math.max(worst, across, down);
   }
-  return { worst, behindCamera };
+  return { worst, behindCamera, nearest };
 }
 
 /** Triangles covering the eight corners of a box centred on `origin`. */
@@ -134,9 +136,11 @@ describe('frameCamera', () => {
         const framing = frameCamera(positions, 45, aspect);
         const fit = frustumFit(positions, 45, aspect, framing.distance);
 
-        // Nothing off screen, nothing behind the camera...
+        // Nothing off screen, nothing behind the camera, and nothing through the near
+        // plane either - "in the frustum" is all six sides, not just the four.
         expect(fit.behindCamera).toBe(false);
         expect(fit.worst).toBeLessThanOrEqual(1);
+        expect(fit.nearest).toBeGreaterThan(framing.near);
         // ...and snug: the tightest vertex sits exactly on the margin. Framing the
         // bounding sphere satisfies the first half and fails this one, by 2x on a wide
         // flat plate.
@@ -181,6 +185,45 @@ describe('frameCamera', () => {
     const centred = frameCamera(boxAt(size), 45, 16 / 9);
     const offset = frameCamera(boxAt(size, [128, -256, 512]), 45, 16 / 9);
     expect(offset.distance).toBeCloseTo(centred.distance, 4);
+  });
+
+  it('keeps a needle pointing at the viewer out of the near plane', () => {
+    // The one shape the lateral fit alone does not solve. A model lying along the view
+    // axis has almost nothing across it, so the fit is satisfied with the camera sitting
+    // on the model's nose - inside the near plane, and in the limit inside the model.
+    const along = VIEW_DIRECTION;
+    const points: number[] = [];
+    for (const t of [-200, -100, 0, 100, 200]) {
+      points.push(along[0] * t, along[1] * t, along[2] * t + 0.05);
+    }
+    const positions = new Float32Array(points);
+    const framing = frameCamera(positions, 45, 16 / 9);
+    const fit = frustumFit(positions, 45, 16 / 9, framing.distance);
+
+    expect(fit.behindCamera).toBe(false);
+    expect(fit.nearest).toBeGreaterThan(framing.near);
+    expect(framing.minDistance).toBeLessThan(framing.distance);
+  });
+
+  it('bounds the zoom by the model, not by the window it was fitted in', () => {
+    // `resize` re-applies these limits without re-fitting, so anything derived from the
+    // opening distance is really derived from whatever shape the window happened to be
+    // when the file loaded. Sizing them from the model instead is what makes that cache
+    // sound rather than sound-within-a-margin: a bar fitted wide and dragged narrow needs
+    // to zoom out six times further than the wide fit ever wanted.
+    const positions = boxAt([400, 3, 3]);
+    const wide = frameCamera(positions, 45, 3);
+    const narrow = frameCamera(positions, 45, 0.5);
+
+    expect(narrow.distance).toBeGreaterThan(wide.distance * 2.5);
+    expect(wide.maxDistance).toBe(narrow.maxDistance);
+    expect(wide.far).toBe(narrow.far);
+    expect(wide.maxDistance).toBeGreaterThan(narrow.distance);
+
+    // And the limit is still somewhere you can see the whole model from.
+    const fit = frustumFit(positions, 45, 0.5, wide.maxDistance);
+    expect(fit.worst).toBeLessThanOrEqual(1);
+    expect(wide.far).toBeGreaterThan(wide.maxDistance);
   });
 
   it('is fully zoomed out at maxDistance without clipping', () => {

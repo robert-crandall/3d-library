@@ -113,11 +113,11 @@ function cross(
  * is the trade every desktop viewer makes, and it is the right way round: the opening
  * shot is what everyone sees, and the overflow needs a deliberate drag to reach.
  *
- * The clip planes bracket the whole permitted zoom range, not just the initial
- * distance: `OrbitControls` lets the user zoom, and planes fitted to the opening shot
- * clip the front of the model the moment they do. Everything scales with the model's
- * radius, so a 1 mm part and a 300 mm plate get the same far/near ratio and so the same
- * depth-buffer precision.
+ * The clip planes and the zoom limits bracket the model itself rather than the opening
+ * shot, so they stay valid at any aspect ratio and a resize does not have to re-fit.
+ * They have to clear the whole permitted zoom range in any case: `OrbitControls` lets the
+ * user zoom, and planes fitted to the opening distance clip the front of the model the
+ * moment they do.
  */
 export function frameCamera(
   positions: Float32Array,
@@ -140,6 +140,7 @@ export function frameCamera(
   const up = cross(forward, right);
 
   let distance = 0;
+  let frontmost = 0;
   for (let i = 0; i < positions.length; i += 3) {
     const x = positions[i] - center[0];
     const y = positions[i + 1] - center[1];
@@ -149,20 +150,29 @@ export function frameCamera(
     const down = Math.abs(x * up[0] + y * up[1] + z * up[2]);
     const need = depth + (MARGIN * Math.max(across / tanH, down / tanV));
     if (need > distance) distance = need;
+    if (depth > frontmost) frontmost = depth;
   }
-  // A mesh with no extent at all - one degenerate triangle - needs every vertex on the
-  // view axis to reach here, and would otherwise put the camera inside the model.
-  if (!(distance > 0)) distance = radius;
 
   const minDistance = radius * 0.05;
-  const maxDistance = distance * 10;
-  return {
-    distance,
-    near: minDistance * 0.5,
-    far: maxDistance + radius * 2,
-    minDistance,
-    maxDistance,
-  };
+  const near = minDistance * 0.5;
+  // Two floors under the fit, both reachable and both leaving the camera somewhere the
+  // returned planes do not describe. A model long and thin *along* the view axis - a
+  // needle pointing at the viewer - satisfies the lateral fit with almost no distance to
+  // spare, and puts its own nose through the near plane; `minDistance` is the closest the
+  // controls ever let the camera get, so it is the clearance to leave. A model with no
+  // extent at all, one degenerate triangle, reaches here with a distance of zero, which
+  // is nearer than `minDistance` and so is not a position the controls would allow.
+  if (!(distance > frontmost + minDistance)) distance = frontmost + minDistance;
+  if (!(distance > minDistance)) distance = radius;
+
+  // Sized from the model rather than from the opening distance, so they stay correct at
+  // any aspect ratio: `resize` re-applies these without re-fitting, and a fit made in a
+  // wide window is a poor bound once the window is narrow. `Math.max` only ever raises
+  // the ceiling, so the ordering the caller relies on holds however tight the fit came
+  // out. Everything scales with the radius, so a 1 mm part and a 300 mm plate get the
+  // same near/far ratio and so the same depth-buffer precision.
+  const maxDistance = Math.max(radius * 40, distance * 1.5);
+  return { distance, near, far: maxDistance + radius * 2, minDistance, maxDistance };
 }
 
 /** One decimal place, trailing zeros stripped: 220 stays 220, 12.65 becomes 12.7. */

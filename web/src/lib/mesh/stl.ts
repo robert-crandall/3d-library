@@ -78,6 +78,12 @@ function parseAscii(text: string): Float32Array {
   // A file cut off mid-triangle leaves a partial one. Dropping it would render a mesh
   // that silently differs from the file, so treat it as the truncation it is.
   if (coordinates.length === 0 || coordinates.length % 9 !== 0) throw new Error(CORRUPT);
+  // `endsolid` is the format's own terminator and the only length information an ASCII
+  // STL carries, so it plays the part the facet count plays in a binary one. Without it a
+  // file cut off on a triangle boundary - which an interrupted copy into the upload can
+  // easily produce - renders as however much of the model survived, with a dimension
+  // readout to match. Every exporter writes it; the grammar requires it.
+  if (!text.includes('endsolid')) throw new Error(CORRUPT);
   return new Float32Array(coordinates);
 }
 

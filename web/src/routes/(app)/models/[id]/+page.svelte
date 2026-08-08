@@ -198,10 +198,10 @@
 </script>
 
 <!--
-  Screen 1c of the design, minus the parts no milestone has built yet: the 3D
-  viewer, versions, category and tags. Those are omitted, not rendered empty - a
-  panel with nothing in it reads as broken, where an absent panel reads as a
-  feature that is not here yet.
+  Screen 1c of the design, minus the parts no milestone has built yet: versions,
+  category and tags. Those are omitted, not rendered empty - a panel with nothing
+  in it reads as broken, where an absent panel reads as a feature that is not here
+  yet.
 
   "Open in slicer" is on the design and is deliberately not built; the epic cut
   it from v1.

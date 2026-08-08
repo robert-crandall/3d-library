@@ -71,7 +71,7 @@ export function createViewer(canvas: HTMLCanvasElement): Viewer {
   // would render such an object inside out.
   const materials: Record<Shading, MeshLambertMaterial | MeshBasicMaterial> = {
     solid: new MeshLambertMaterial({ color: SURFACE_COLOR, side: DoubleSide }),
-    wireframe: new MeshBasicMaterial({ color: LINE_COLOR, wireframe: true }),
+    wireframe: new MeshBasicMaterial({ color: LINE_COLOR, wireframe: true, side: DoubleSide }),
     xray: new MeshBasicMaterial({
       color: LINE_COLOR,
       side: DoubleSide,
@@ -102,9 +102,10 @@ export function createViewer(canvas: HTMLCanvasElement): Viewer {
     render();
   };
 
-  // Kept so a resize can re-apply the clip planes and zoom limits without re-fitting.
-  // The fit itself is deliberately not redone: it would override the user's zoom, and
-  // re-running it costs a pass over every vertex on every frame of a window drag.
+  // Kept so a resize can re-apply the clip planes and zoom limits. They are sized from
+  // the model rather than the fit, so they need no recomputing; the fit itself is
+  // deliberately not redone, because it would override the user's zoom and costs a pass
+  // over every vertex on every frame of a window drag.
   let framing: Framing | undefined;
 
   function applyFraming() {
