@@ -122,16 +122,16 @@ export function createViewport(canvas: HTMLCanvasElement): Viewport {
   };
 }
 
-/** Free a subtree's geometries and materials. Three does not do this for you. */
-export function disposeTree(root: Object3D) {
+/**
+ * Free a subtree's geometries. Three does not do this for you.
+ *
+ * Geometries only, because a material outlives the nodes wearing it: both scenes build
+ * their materials once and hand the same instance to every node, so disposing them here
+ * would free a material that the next draw still uses - and then free it a second time
+ * when the viewer is torn down. Materials belong to whoever made them.
+ */
+export function disposeGeometries(root: Object3D) {
   root.traverse((node) => {
-    const holder = node as Object3D & {
-      geometry?: { dispose(): void };
-      material?: { dispose(): void } | Array<{ dispose(): void }>;
-    };
-    holder.geometry?.dispose();
-    const material = holder.material;
-    if (Array.isArray(material)) for (const one of material) one.dispose();
-    else material?.dispose();
+    (node as Object3D & { geometry?: { dispose(): void } }).geometry?.dispose();
   });
 }

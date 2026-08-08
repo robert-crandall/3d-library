@@ -181,9 +181,11 @@ export function formatPrinter(printer: Printer): string {
   const { x, y, z } = printer.volume;
   const size =
     x === y && y === z ? `${round(x)}³` : `${round(x)} × ${round(y)} × ${round(z)} mm`;
-  if (!printer.model) return `Unknown printer · ${size} build volume assumed`;
-  if (!printer.known) return `${printer.model} · ${size} build volume assumed`;
-  return `${printer.model} · ${size} build volume`;
+  // "assumed" tracks the volume, not the name. A file can declare a bed_shape without
+  // naming a printer, and that volume is the most authoritative thing we have - calling
+  // it assumed because the model is missing describes the wrong field.
+  const name = printer.model ?? 'Unknown printer';
+  return `${name} · ${size} build volume${printer.known ? '' : ' assumed'}`;
 }
 
 function round(value: number): number {

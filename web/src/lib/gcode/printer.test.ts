@@ -196,6 +196,16 @@ function lightnessOf(color: number): number {
   return (Math.max(r, g, b) + Math.min(r, g, b)) / 2;
 }
 
+  it('does not call a volume the file declared an assumption', () => {
+    // A bed_shape with no printer_model is a real profile: the volume is the most
+    // authoritative thing we have, and the missing name is a different fact. Hanging
+    // "assumed" off the name described the wrong field.
+    const printer = resolvePrinter({
+      buildVolume: { minXMm: 0, minYMm: 0, maxXMm: 300, maxYMm: 300, heightMm: 300 },
+    });
+    expect(formatPrinter(printer)).toBe('Unknown printer · 300³ build volume');
+  });
+
 describe('volumeFor', () => {
   const printer = resolvePrinter({ printerModel: 'Bambu Lab X1 Carbon' });
 

@@ -6,7 +6,7 @@ import {
   LineBasicMaterial,
   LineSegments,
 } from 'three';
-import { createViewport, disposeTree } from '$lib/viewer/viewport';
+import { createViewport, disposeGeometries } from '$lib/viewer/viewport';
 import { layerRange, skipSegments, spreadRange, type Toolpath } from './toolpath';
 import type { Volume } from './printer';
 
@@ -91,7 +91,7 @@ export function createViewer(canvas: HTMLCanvasElement): GcodeViewer {
   let shown: Toolpath | undefined;
 
   function rebuild(group: Group, chunks: readonly Float32Array[]) {
-    disposeTree(group);
+    disposeGeometries(group);
     group.clear();
     for (const chunk of chunks) {
       const geometry = new BufferGeometry();
@@ -132,7 +132,7 @@ export function createViewer(canvas: HTMLCanvasElement): GcodeViewer {
       rebuild(extrusion, toolpath.extrusion);
       rebuild(travel, toolpath.travel);
 
-      disposeTree(grid);
+      disposeGeometries(grid);
       grid.clear();
       if (volume) grid.add(new LineSegments(buildVolumeGeometry(volume), gridMaterial));
 
@@ -143,7 +143,7 @@ export function createViewer(canvas: HTMLCanvasElement): GcodeViewer {
     clear() {
       shown = undefined;
       for (const group of [extrusion, travel, grid]) {
-        disposeTree(group);
+        disposeGeometries(group);
         group.clear();
       }
       viewport.render();
@@ -164,9 +164,9 @@ export function createViewer(canvas: HTMLCanvasElement): GcodeViewer {
     resize: viewport.resize,
 
     dispose() {
-      disposeTree(extrusion);
-      disposeTree(travel);
-      disposeTree(grid);
+      disposeGeometries(extrusion);
+      disposeGeometries(travel);
+      disposeGeometries(grid);
       extrusionMaterial.dispose();
       travelMaterial.dispose();
       gridMaterial.dispose();
