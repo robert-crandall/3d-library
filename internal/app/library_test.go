@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -903,4 +904,96 @@ func waitForBlockedBackends(t *testing.T, dbURL string, blocker int32, want int)
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("fewer than %d backends ever blocked behind the test's lock on the model row", want)
+}
+
+// A client that gives up mid-upload leaves nothing behind.
+//
+// This is the load-bearing fact under the UI's handling of an ambiguous
+// failure. When `fetch` rejects, the browser cannot know what the server did,
+// and if the server could still go on to commit then the UI's confirming
+// re-read could look before the model existed and wrongly conclude it is safe
+// to upload again - which, in a milestone with no delete, means a duplicate
+// nobody can remove.
+//
+// It does not, and the reason is simpler than context propagation: `fetch`
+// rejects when the connection fails before the response arrives, and if the
+// connection failed early enough for that, the body never finished arriving
+// either. The upload fails while reading it, long before COMMIT. (Verified by
+// mutation: the test still passes with the request context replaced by an
+// uncancellable one, so it is the truncated body doing the work, not
+// cancellation.)
+//
+// That leaves one interleaving this does NOT cover: the body arrives complete,
+// the server commits, and the *response* is lost. Then the model exists and
+// the confirming re-read finds it, which is the case the re-read is for. The
+// genuinely undecidable sliver - connection lost while COMMIT itself is in
+// flight - is microseconds wide on the server against a human clicking a
+// button, and the service already reports it as a 500. M2 brings delete, which
+// is what makes even that repairable.
+//
+// The temp-file half of this is load-bearing too: an upload that dies partway
+// through staging must not leave its bytes on disk.
+func TestAbandonedUploadCommitsNothing(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	dir := t.TempDir()
+	ts := newTestServer(t, pool, library.Options{Dir: dir})
+	c := signIn(t, ts, "quitter@example.com")
+
+	// A body that is deliberately never finished: the multipart part is opened
+	// and some bytes are written, then the request is abandoned. The server is
+	// blocked reading the rest when the connection goes.
+	pr, pw := io.Pipe()
+	form := multipart.NewWriter(pw)
+	ctx, abandon := context.WithCancel(context.Background())
+
+	go func() {
+		part, err := form.CreateFormFile("file", "half.stl")
+		if err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		part.Write([]byte("solid partial"))
+		// Hand back to the test, which cancels. The pipe write below blocks
+		// until then, so the request really is in flight and incomplete.
+		<-ctx.Done()
+		pw.CloseWithError(errors.New("client gave up"))
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		ts.URL+"/api/models?"+url.Values{"name": {"Abandoned"}}.Encode(), pr)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", form.FormDataContentType())
+
+	errc := make(chan error, 1)
+	go func() {
+		resp, err := c.hc.Do(req)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		errc <- err
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+	abandon()
+	if err := <-errc; err == nil {
+		t.Fatal("the abandoned request somehow succeeded")
+	}
+
+	// Give the server a moment to notice and unwind before looking.
+	time.Sleep(250 * time.Millisecond)
+
+	var models []library.Model
+	if err := json.Unmarshal([]byte(mustGet(t, c, "/api/models")), &models); err != nil {
+		t.Fatalf("decode library: %v", err)
+	}
+	if len(models) != 0 {
+		t.Errorf("got %d models, want 0 - an abandoned upload committed", len(models))
+	}
+	final, temp := blobs(t, dir)
+	if len(final) != 0 || len(temp) != 0 {
+		t.Errorf("got %d blobs and %d temp files, want none of either", len(final), len(temp))
+	}
 }
