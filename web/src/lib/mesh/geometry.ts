@@ -69,32 +69,90 @@ export type Framing = {
 const MARGIN = 1.15;
 
 /**
+ * Direction from the model to the camera: a three-quarter view from above, matching the
+ * design's screenshots. A straight-on axis view hides depth entirely.
+ *
+ * Exported so `frameCamera` and the scene cannot disagree about the opening shot - the
+ * framing below is only correct for the direction the camera is actually placed on.
+ */
+export const VIEW_DIRECTION: [number, number, number] = unit([1, -1, 0.65]);
+
+/** Printers and slicers put Z up, so the preview does too; three's default is Y up. */
+export const VIEW_UP: [number, number, number] = [0, 0, 1];
+
+function unit(v: [number, number, number]): [number, number, number] {
+  const length = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / length, v[1] / length, v[2] / length];
+}
+
+function cross(
+  a: [number, number, number],
+  b: [number, number, number],
+): [number, number, number] {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+/**
  * Where to put the camera, and where to put the clip planes.
  *
- * The caller centres the geometry on the origin and points the camera at it, so this
- * only needs the bounding-box size. Distance is computed from the bounding *sphere*
- * rather than the box, so the framing does not change as the user orbits.
+ * Distance is the smallest one that keeps every *vertex* inside the frustum from
+ * `VIEW_DIRECTION`, solved directly: a vertex at depth `d` along the view axis and
+ * `x` across it needs the camera at least `d + x / tan(fov/2)` away, so the answer is
+ * the largest such requirement over the mesh. One pass, no search.
+ *
+ * Fitting the vertices rather than the bounding sphere is the whole point. A slicer
+ * plate is wide and flat with its objects spread out, so its sphere is roughly twice
+ * the radius of anything you can see: framing the sphere left a real 507 x 417 x 41 mm
+ * plate occupying 2% of the panel, and it took fourteen scroll notches to fill the
+ * frame. The cost is that the fit is only tight for the opening angle - orbiting to a
+ * broader silhouette can push the model past the edges, and the user scrolls out. That
+ * is the trade every desktop viewer makes, and it is the right way round: the opening
+ * shot is what everyone sees, and the overflow needs a deliberate drag to reach.
  *
  * The clip planes bracket the whole permitted zoom range, not just the initial
  * distance: `OrbitControls` lets the user zoom, and planes fitted to the opening shot
  * clip the front of the model the moment they do. Everything scales with the model's
- * radius, so a 1 mm part and a 300 mm plate get the same far/near ratio (~1e4) and so
- * the same depth-buffer precision.
+ * radius, so a 1 mm part and a 300 mm plate get the same far/near ratio and so the same
+ * depth-buffer precision.
  */
 export function frameCamera(
-  size: [number, number, number],
+  positions: Float32Array,
   fovDegrees: number,
   aspect: number,
 ): Framing {
+  const bounds = boundsOf(positions);
+  const center = centerOf(bounds);
+  const size = sizeOf(bounds);
   const radius = Math.max(Math.hypot(size[0], size[1], size[2]) / 2, 1e-6);
   const safeAspect = aspect > 0 && Number.isFinite(aspect) ? aspect : 1;
 
   // A perspective camera's vertical FOV is fixed; the horizontal one follows from the
-  // aspect ratio. A tall, narrow viewport is horizontally tighter, so take the larger
-  // of the two required distances - which is the one from the smaller angle.
-  const vFov = (fovDegrees * Math.PI) / 180;
-  const hFov = 2 * Math.atan(Math.tan(vFov / 2) * safeAspect);
-  const distance = (MARGIN * radius) / Math.sin(Math.min(vFov, hFov) / 2);
+  // aspect ratio, so a tall narrow viewport is horizontally the tighter of the two.
+  const tanV = Math.tan((fovDegrees * Math.PI) / 360);
+  const tanH = tanV * safeAspect;
+
+  const forward = VIEW_DIRECTION;
+  const right = unit(cross(VIEW_UP, forward));
+  const up = cross(forward, right);
+
+  let distance = 0;
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i] - center[0];
+    const y = positions[i + 1] - center[1];
+    const z = positions[i + 2] - center[2];
+    const depth = x * forward[0] + y * forward[1] + z * forward[2];
+    const across = Math.abs(x * right[0] + y * right[1] + z * right[2]);
+    const down = Math.abs(x * up[0] + y * up[1] + z * up[2]);
+    const need = depth + (MARGIN * Math.max(across / tanH, down / tanV));
+    if (need > distance) distance = need;
+  }
+  // A mesh with no extent at all - one degenerate triangle - needs every vertex on the
+  // view axis to reach here, and would otherwise put the camera inside the model.
+  if (!(distance > 0)) distance = radius;
 
   const minDistance = radius * 0.05;
   const maxDistance = distance * 10;

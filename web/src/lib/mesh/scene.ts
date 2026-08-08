@@ -13,7 +13,15 @@ import {
   WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { boundsOf, centerOf, frameCamera, sizeOf, type ParsedMesh } from './geometry';
+import {
+  boundsOf,
+  centerOf,
+  frameCamera,
+  VIEW_DIRECTION,
+  VIEW_UP,
+  type Framing,
+  type ParsedMesh,
+} from './geometry';
 
 // Everything three.js-shaped lives here, and nothing else does. The maths this file
 // leans on is in `geometry.ts`, which imports nothing and is unit-tested; what is left
@@ -45,9 +53,7 @@ export function createViewer(canvas: HTMLCanvasElement): Viewer {
 
   const scene = new Scene();
   const camera = new PerspectiveCamera(FOV, 1, 0.1, 1000);
-  // Printers and slicers put Z up, so the preview does too; three's default is Y up,
-  // which would show every model lying on its side.
-  camera.up.set(0, 0, 1);
+  camera.up.set(...VIEW_UP);
 
   // Parented to the camera so the lighting orbits with the viewer. Fixed lights leave
   // the far side of the model in permanent shadow, which looks like a hole in the mesh.
@@ -91,17 +97,18 @@ export function createViewer(canvas: HTMLCanvasElement): Viewer {
     const height = canvas.clientHeight || 1;
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
-    reframe();
+    applyFraming();
     camera.updateProjectionMatrix();
     render();
   };
 
-  // Kept so a resize can re-fit without re-uploading the geometry.
-  let size: [number, number, number] | undefined;
+  // Kept so a resize can re-apply the clip planes and zoom limits without re-fitting.
+  // The fit itself is deliberately not redone: it would override the user's zoom, and
+  // re-running it costs a pass over every vertex on every frame of a window drag.
+  let framing: Framing | undefined;
 
-  function reframe() {
-    if (!size) return;
-    const framing = frameCamera(size, FOV, camera.aspect);
+  function applyFraming() {
+    if (!framing) return;
     camera.near = framing.near;
     camera.far = framing.far;
     controls.minDistance = framing.minDistance;
@@ -116,7 +123,6 @@ export function createViewer(canvas: HTMLCanvasElement): Viewer {
     show(parsed) {
       const bounds = boundsOf(parsed.positions);
       const center = centerOf(bounds);
-      size = sizeOf(bounds);
 
       const geometry = new BufferGeometry();
       geometry.setAttribute('position', new Float32BufferAttribute(parsed.positions, 3));
@@ -140,14 +146,13 @@ export function createViewer(canvas: HTMLCanvasElement): Viewer {
       const height = canvas.clientHeight || 1;
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
-      reframe();
+      framing = frameCamera(parsed.positions, FOV, camera.aspect);
+      applyFraming();
       camera.updateProjectionMatrix();
 
-      const framing = frameCamera(size, FOV, camera.aspect);
-      // A three-quarter view from above: the design's screenshots show the model from
-      // roughly this angle, and a straight-on axis view hides depth entirely.
-      camera.position
-        .copy(new Vector3(1, -1, 0.65).normalize().multiplyScalar(framing.distance));
+      camera.position.copy(
+        new Vector3(...VIEW_DIRECTION).multiplyScalar(framing.distance),
+      );
       controls.target.set(0, 0, 0);
       controls.update();
       render();

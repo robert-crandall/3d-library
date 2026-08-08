@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import MeshViewer from './MeshViewer.svelte';
-import { asciiStl, boxTriangles, coreOnly3mf } from '$lib/mesh/fixtures';
+import { asciiStl, binaryStl, boxTriangles, coreOnly3mf } from '$lib/mesh/fixtures';
 import { MAX_PREVIEW_BYTES } from '$lib/mesh/parse';
 
 // three.js needs a GL context, which jsdom does not have. Stubbing the whole module is
@@ -81,6 +81,32 @@ describe('MeshViewer', () => {
     render(MeshViewer, { modelId: 7, files: [gcode] });
     expect(await screen.findByText(/no STL or 3MF file to preview/)).not.toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('hides the shading controls when there is nothing to shade', async () => {
+    // Three buttons that cannot change anything are noise a screen reader still reads
+    // out. Markup that is merely hidden would satisfy a `toBeVisible` check and fail
+    // this one.
+    render(MeshViewer, { modelId: 7, files: [gcode] });
+    await screen.findByText(/no STL or 3MF file to preview/);
+    expect(screen.queryByRole('group', { name: 'Shading' })).toBeNull();
+  });
+
+  it('shows the shading controls once a mesh is on screen', async () => {
+    render(MeshViewer, { modelId: 7, files: [stl] });
+    await waitFor(() => expect(show).toHaveBeenCalled());
+    expect(screen.queryByRole('group', { name: 'Shading' })).not.toBeNull();
+  });
+
+  it('keeps the shading controls up while a mesh is still downloading', async () => {
+    // The controls have to survive `loading`, because choosing a mode before the first
+    // mesh arrives is supported and the renderer builds it in that mode.
+    let release: (value: unknown) => void = () => {};
+    fetchMock.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    render(MeshViewer, { modelId: 7, files: [stl] });
+    await screen.findByText(/Loading preview/);
+    expect(screen.queryByRole('group', { name: 'Shading' })).not.toBeNull();
+    release(ok(binaryStl(boxTriangles(20, 10, 5))));
   });
 
   it('refuses a file over the size cap before downloading it', async () => {

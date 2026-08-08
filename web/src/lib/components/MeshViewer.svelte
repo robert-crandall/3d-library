@@ -208,27 +208,35 @@
     {/if}
   </div>
 
-  <div
-    class="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line px-4 py-2.5"
-  >
-    <div class="flex gap-1" role="group" aria-label="Shading">
-      {#each MODES as mode (mode.value)}
-        <button
-          type="button"
-          class="rounded border border-line-strong px-2 py-1 text-xs"
-          class:font-bold={shading === mode.value}
-          aria-pressed={shading === mode.value}
-          onclick={() => choose(mode.value)}
-        >
-          {mode.label}
-        </button>
-      {/each}
-    </div>
+  {#if status === 'loading' || status === 'ready'}
+    <!--
+      Not while the panel is empty, too large, or failed: there is nothing to shade, and
+      three buttons that do nothing are noise for a screen reader to read out. Kept
+      during `loading` on purpose - picking a mode before the first mesh arrives works,
+      and the renderer builds it in the chosen shading rather than in solid.
+    -->
+    <div
+      class="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line px-4 py-2.5"
+    >
+      <div class="flex gap-1" role="group" aria-label="Shading">
+        {#each MODES as mode (mode.value)}
+          <button
+            type="button"
+            class="rounded border border-line-strong px-2 py-1 text-xs"
+            class:font-bold={shading === mode.value}
+            aria-pressed={shading === mode.value}
+            onclick={() => choose(mode.value)}
+          >
+            {mode.label}
+          </button>
+        {/each}
+      </div>
 
-    {#if readout}
-      <p class="text-xs text-muted" data-testid="mesh-readout">{readout}</p>
-    {/if}
-  </div>
+      {#if readout}
+        <p class="text-xs text-muted" data-testid="mesh-readout">{readout}</p>
+      {/if}
+    </div>
+  {/if}
 
   {#if meshFiles.length > 1}
     <!--
