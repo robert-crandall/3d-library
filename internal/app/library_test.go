@@ -812,6 +812,10 @@ func TestRacingUploadsCannotExceedMaxFiles(t *testing.T) {
 		"SELECT id FROM models WHERE id = $1 FOR UPDATE", model.ID).Scan(&locked); err != nil {
 		t.Fatalf("lock the model row: %v", err)
 	}
+	var blockerPID int32
+	if err := blocker.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&blockerPID); err != nil {
+		t.Fatalf("read the blocker's pid: %v", err)
+	}
 
 	codes := make(chan int, 2)
 	for i := range 2 {
@@ -825,7 +829,7 @@ func TestRacingUploadsCannotExceedMaxFiles(t *testing.T) {
 	// Both requests have to be *waiting on this lock* before it is released.
 	// Releasing early would let them serialise naturally and the test would
 	// prove nothing.
-	waitForBlockedBackends(t, dbURL, 2)
+	waitForBlockedBackends(t, dbURL, blockerPID, 2)
 	if err := blocker.Rollback(ctx); err != nil {
 		t.Fatalf("release the lock: %v", err)
 	}
@@ -856,9 +860,18 @@ func TestRacingUploadsCannotExceedMaxFiles(t *testing.T) {
 	}
 }
 
-// waitForBlockedBackends waits until `want` backends are stuck on a lock. It
-// polls rather than sleeps so the test is not tuned to any particular machine.
-func waitForBlockedBackends(t *testing.T, dbURL string, want int) {
+// waitForBlockedBackends waits until `want` backends are stuck behind
+// `blocker`. It polls rather than sleeps so the test is not tuned to any
+// particular machine, and it asks about this lock in particular rather than
+// counting every lock wait in the database - a wait on something unrelated
+// would otherwise satisfy it and release the lock before the requests had
+// reached it, which is exactly the interleaving the pre-fix code survives.
+//
+// The walk is recursive because row-lock queues are: only the first waiter
+// blocks on `blocker`, and the second blocks on the first. pg_blocking_pids
+// reports direct blockers only, so asking who is blocked *by the blocker*
+// finds one backend and never two, however long you wait for it.
+func waitForBlockedBackends(t *testing.T, dbURL string, blocker int32, want int) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -872,10 +885,16 @@ func waitForBlockedBackends(t *testing.T, dbURL string, want int) {
 	for time.Now().Before(deadline) {
 		var blocked int
 		if err := watcher.QueryRow(ctx,
-			`SELECT count(*) FROM pg_stat_activity
-			  WHERE datname = current_database()
-			    AND wait_event_type = 'Lock'
-			    AND query ILIKE '%FOR UPDATE%'`).Scan(&blocked); err != nil {
+			`WITH RECURSIVE queued(pid) AS (
+			     SELECT pid FROM pg_stat_activity
+			      WHERE datname = current_database()
+			        AND $1 = ANY(pg_blocking_pids(pid))
+			   UNION
+			     SELECT a.pid FROM pg_stat_activity a, queued q
+			      WHERE a.datname = current_database()
+			        AND q.pid = ANY(pg_blocking_pids(a.pid))
+			 )
+			 SELECT count(*) FROM queued`, blocker).Scan(&blocked); err != nil {
 			t.Fatalf("inspect pg_stat_activity: %v", err)
 		}
 		if blocked >= want {
@@ -883,5 +902,5 @@ func waitForBlockedBackends(t *testing.T, dbURL string, want int) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("only saw fewer than %d backends blocked on the model row lock", want)
+	t.Fatalf("fewer than %d backends ever blocked behind the test's lock on the model row", want)
 }

@@ -1,13 +1,14 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import UploadDialog from './UploadDialog.svelte';
+import { MAX_FILE_BYTES } from '$lib/upload';
 
 vi.mock('$lib/upload', async () => {
   const actual = await vi.importActual<typeof import('$lib/upload')>('$lib/upload');
   return { ...actual, uploadModel: vi.fn() };
 });
 
-import { uploadModel } from '$lib/upload';
+import { UploadFailed, uploadModel } from '$lib/upload';
 
 const mocked = vi.mocked(uploadModel);
 
@@ -54,19 +55,88 @@ describe('UploadDialog', () => {
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeNull();
   });
 
-  // The other half: when nothing was created, uploadModel throws, and offering
-  // a retry is exactly right because there is no model to duplicate.
-  it('keeps the Upload button when the whole upload failed', async () => {
-    mocked.mockImplementation(() => Promise.reject(new Error('Could not reach the server.')));
+  // The other half: the server *answered* with a refusal, so nothing was
+  // created and a retry cannot duplicate anything. Offering one is right.
+  it('keeps the Upload button when the server refused the upload', async () => {
+    mocked.mockImplementation(() => Promise.reject(new UploadFailed('That file is not a model.', true)));
 
     render(UploadDialog, { onclose: vi.fn(), onuploaded: vi.fn() });
 
     await pickAFile();
     await submit();
 
-    expect((await screen.findByRole('alert')).textContent).toContain('Could not reach the server.');
+    expect((await screen.findByRole('alert')).textContent).toContain('That file is not a model.');
     expect((screen.getByRole('button', { name: 'Upload' }) as HTMLButtonElement).disabled).toBe(
       false
+    );
+  });
+
+  // A dropped connection does not mean the upload failed - the request may
+  // have landed and the response been lost. Pressing Upload again there is how
+  // you get two copies of a model nothing in this milestone can delete, so the
+  // dialog has to stop offering it and send the user to look instead.
+  it('offers no retry when the failure does not prove nothing was created', async () => {
+    mocked.mockImplementation(() =>
+      Promise.reject(new UploadFailed('Could not reach the server.', false))
+    );
+
+    render(UploadDialog, { onclose: vi.fn(), onuploaded: vi.fn() });
+
+    await pickAFile();
+    await submit();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Could not reach the server.');
+    expect(alert.textContent).toContain('reload the library');
+    expect(screen.queryByRole('button', { name: 'Upload' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeNull();
+  });
+
+  // The Upload button is gone once the dialog goes terminal, but the name field
+  // is still there and Enter in a text input submits the form. Without a guard
+  // that is a second upload, and a second copy of the model.
+  it('does not upload again when Enter is pressed after a partial upload', async () => {
+    mocked.mockImplementation(async () => ({
+      model: { id: 7, name: 'Half', fileCount: 1 } as never,
+      failed: ['b.stl']
+    }));
+
+    render(UploadDialog, { onclose: vi.fn(), onuploaded: vi.fn() });
+
+    await pickAFile();
+    await submit();
+    await screen.findByRole('alert');
+    // Counted from a baseline rather than from zero: the mock is deliberately
+    // not reset between tests, because resetting it in a top-level beforeEach
+    // makes vitest report a deliberately-rejected upload as an unhandled
+    // rejection before the component's own catch ever sees it.
+    const sent = mocked.mock.calls.length;
+
+    await fireEvent.submit(screen.getByLabelText('Name').closest('form') as HTMLFormElement);
+
+    expect(mocked.mock.calls.length).toBe(sent);
+  });
+
+  // A rejected selection has to clear the accepted one too. Leaving the earlier
+  // pick uploadable under a message about a different file uploads the wrong
+  // thing, quietly.
+  it('drops an earlier selection when a later one is rejected', async () => {
+    render(UploadDialog, { onclose: vi.fn(), onuploaded: vi.fn() });
+
+    await pickAFile();
+    expect((screen.getByRole('button', { name: 'Upload' }) as HTMLButtonElement).disabled).toBe(
+      false
+    );
+
+    const input = screen.getByLabelText('Files') as HTMLInputElement;
+    const huge = new File(['x'], 'huge.stl', { type: 'model/stl' });
+    Object.defineProperty(huge, 'size', { value: MAX_FILE_BYTES + 1 });
+    Object.defineProperty(input, 'files', { value: [huge], configurable: true });
+    await fireEvent.change(input);
+
+    expect((await screen.findByRole('alert')).textContent).toContain('huge.stl');
+    expect((screen.getByRole('button', { name: 'Upload' }) as HTMLButtonElement).disabled).toBe(
+      true
     );
   });
 });

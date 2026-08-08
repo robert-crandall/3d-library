@@ -60,6 +60,69 @@ describe('library page', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Could not reach the server');
   });
 
+  // Uploading is a way out of a failed load: the user still has the header
+  // button. Without clearing the status the grid keeps showing "try again" and
+  // the model they just watched upload is nowhere - which reads as data loss.
+  it('shows an uploaded model even when the initial load failed', async () => {
+    get.mockResolvedValue({ error: { detail: 'boom' } });
+    const fetch = vi.fn(async (url: string, init?: RequestInit) =>
+      init
+        ? ({ ok: true, status: 201, json: async () => ({ id: 9, name: 'Cable clip' }) } as Response)
+        : ({
+            ok: true,
+            json: async () => ({ id: 9, name: 'Cable clip', fileCount: 1, totalSize: 2048 })
+          } as Response)
+    );
+    vi.stubGlobal('fetch', fetch);
+
+    render(LibraryPage);
+    await screen.findByRole('alert');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
+
+    const dialog = screen.getByRole('form', { name: 'Upload a model' });
+    await fireEvent.change(within(dialog).getByLabelText('Files'), {
+      target: { files: [new File(['solid'], 'clip.stl')] }
+    });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Upload' }));
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Cable clip' })).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  // A slow first load that lands after an upload must not put the grid back
+  // the way it was before the upload. The list it is carrying is simply older
+  // than what the user just did.
+  it('does not let a slow initial load erase a model uploaded while it was in flight', async () => {
+    let finishLoad!: (value: unknown) => void;
+    get.mockImplementation(() => new Promise((resolve) => (finishLoad = resolve)));
+    const fetch = vi.fn(async (url: string, init?: RequestInit) =>
+      init
+        ? ({ ok: true, status: 201, json: async () => ({ id: 9, name: 'Cable clip' }) } as Response)
+        : ({
+            ok: true,
+            json: async () => ({ id: 9, name: 'Cable clip', fileCount: 1, totalSize: 2048 })
+          } as Response)
+    );
+    vi.stubGlobal('fetch', fetch);
+
+    render(LibraryPage);
+    await fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    const dialog = screen.getByRole('form', { name: 'Upload a model' });
+    await fireEvent.change(within(dialog).getByLabelText('Files'), {
+      target: { files: [new File(['solid'], 'clip.stl')] }
+    });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Upload' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Cable clip' })).toBeTruthy());
+
+    // The library as it was before the upload: empty.
+    finishLoad({ data: [] });
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Cable clip' })).toBeTruthy());
+    expect(screen.queryByText('Nothing here yet')).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
   it('opens the upload dialog from the header button', async () => {
     get.mockResolvedValue({ data: [model] });
     render(LibraryPage);

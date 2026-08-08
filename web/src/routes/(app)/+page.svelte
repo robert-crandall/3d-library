@@ -14,10 +14,18 @@
   let error = $state('');
   let uploading = $state(false);
 
+  // Bumped by every load and by every upload. A load only gets to write to the
+  // page if nothing else has happened since it started: a slow first load that
+  // lands after the user has already uploaded something would otherwise replace
+  // the grid with a list that predates the upload.
+  let generation = 0;
+
   async function load() {
+    const mine = ++generation;
     error = '';
     try {
       const { data, error: failure } = await api.GET('/api/models');
+      if (mine !== generation) return;
       if (failure) {
         error = apiErrorMessage(failure, 'Could not load the library.');
         status = 'failed';
@@ -28,6 +36,7 @@
     } catch {
       // openapi-fetch lets a fetch-level rejection through, so without this the
       // page would sit on "Loading…" forever.
+      if (mine !== generation) return;
       error = 'Could not reach the server.';
       status = 'failed';
     }
@@ -39,7 +48,13 @@
   // returned the finished model, so a second round trip would only be a chance
   // for the two to disagree.
   function uploaded(model: Model, opts?: { keepOpen?: boolean }) {
+    generation += 1;
     models = [model, ...models];
+    // The grid may still be showing "could not load the library" from a failed
+    // load. There is now something to show, so showing that instead would be a
+    // lie about a model the user just watched upload.
+    status = 'ready';
+    error = '';
     // A partial upload keeps the dialog open to say what is missing, but the
     // model still belongs in the grid immediately: it exists, and a library
     // that does not show it is lying.

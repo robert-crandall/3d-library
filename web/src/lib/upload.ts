@@ -27,6 +27,29 @@ export type UploadState = 'queued' | 'uploading' | 'done' | 'failed';
 export type UploadOutcome = { model: Model; failed: string[] };
 
 /**
+ * A failure that created nothing, or one that might have.
+ *
+ * `certain` is true only when the server *answered* with a refusal - a 4xx.
+ * Those are generated before anything is committed, so nothing exists and
+ * offering the user a retry is right.
+ *
+ * A dropped connection or a 5xx is not that. The request may well have landed:
+ * the server itself treats a COMMIT that returns an error as possibly
+ * committed, and a response can be lost on the way back regardless. Retrying
+ * then is how you get two copies of a model that this milestone cannot delete,
+ * so the caller has to offer a reload instead.
+ */
+export class UploadFailed extends Error {
+  readonly certain: boolean;
+
+  constructor(message: string, certain: boolean) {
+    super(message);
+    this.name = 'UploadFailed';
+    this.certain = certain;
+  }
+}
+
+/**
  * Upload `files` as one model.
  *
  * Sequential, one request per file, because that is the shape the API has: the
@@ -76,7 +99,7 @@ export async function uploadModel(
     } catch {
       const message = 'Could not reach the server.';
       onState(index, 'failed', message);
-      if (!model) throw new Error(message);
+      if (!model) throw new UploadFailed(message, false);
       failed.push(file.name);
       continue;
     }
@@ -84,7 +107,7 @@ export async function uploadModel(
     if (!response.ok) {
       const message = await failureMessage(response);
       onState(index, 'failed', message);
-      if (!model) throw new Error(message);
+      if (!model) throw new UploadFailed(message, response.status < 500);
       failed.push(file.name);
       continue;
     }
@@ -111,6 +134,12 @@ export async function uploadModel(
   } catch {
     // Keep what we have.
   }
+
+  // The re-read is the arbiter, not the individual responses. A file whose
+  // response was lost still landed, and telling the user it is missing when it
+  // is sitting right there is its own kind of wrong.
+  if (failed.length > 0 && model.fileCount === files.length) return { model, failed: [] };
+
   return { model, failed };
 }
 

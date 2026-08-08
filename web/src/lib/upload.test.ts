@@ -165,6 +165,65 @@ describe('uploadModel', () => {
     );
   });
 
+  // Whether a retry is safe is the whole question, so it is carried on the
+  // error rather than left for the caller to guess at from a message.
+  it('marks a refusal from the server as certain and a lost connection as not', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({ ok: false, status: 422, json: async () => ({ detail: 'nope' }) }) as unknown as Response
+      )
+    );
+    await expect(uploadModel('Refused', [file('a.stl')], () => {})).rejects.toMatchObject({
+      certain: true
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () => ({ ok: false, status: 500, json: async () => ({}) }) as unknown as Response
+      )
+    );
+    await expect(uploadModel('Broke', [file('a.stl')], () => {})).rejects.toMatchObject({
+      certain: false
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      })
+    );
+    await expect(uploadModel('Offline', [file('a.stl')], () => {})).rejects.toMatchObject({
+      certain: false
+    });
+  });
+
+  // A lost response is not a lost file. The re-read at the end is the arbiter:
+  // if the server has every file, telling the user one is missing - and
+  // sending them off to add it a second time - is simply wrong.
+  it('trusts the re-read over a lost response', async () => {
+    let call = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith('/api/models/9')) {
+          return { ok: true, json: async () => ({ id: 9, name: 'Both', fileCount: 2 }) } as never;
+        }
+        call += 1;
+        if (call === 1) {
+          return { ok: true, json: async () => ({ id: 9, name: 'Both', fileCount: 1 }) } as never;
+        }
+        throw new TypeError('Failed to fetch');
+      })
+    );
+
+    const { model, failed } = await uploadModel('Both', [file('a.stl'), file('b.stl')], () => {});
+    expect(model.fileCount).toBe(2);
+    expect(failed).toEqual([]);
+  });
+
   it('refuses an empty selection', async () => {
     await expect(uploadModel('Nothing', [], () => {})).rejects.toThrow('at least one file');
   });

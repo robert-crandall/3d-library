@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { MAX_FILES, MAX_FILE_BYTES, uploadModel, type Model, type UploadState } from '$lib/upload';
+  import {
+    MAX_FILES,
+    MAX_FILE_BYTES,
+    UploadFailed,
+    uploadModel,
+    type Model,
+    type UploadState
+  } from '$lib/upload';
   import { formatBytes } from '$lib/format';
 
   let {
@@ -16,16 +23,21 @@
   let queue = $state<Queued[]>([]);
   let error = $state('');
   let busy = $state(false);
-  // Set when a model was created but not every file made it. The model is
-  // already in the grid at that point, so the only honest thing left to do is
-  // say what is missing and close - uploading again would make a second copy,
-  // and nothing in this milestone can delete either one.
-  let partial = $state('');
+  // Set when uploading again could produce a second copy: either a model was
+  // created without all its files, or a request failed in a way that does not
+  // prove it failed. Either way the dialog goes terminal - it says what it
+  // knows and offers Done - because nothing in this milestone can delete a
+  // duplicate once it exists.
+  let done = $state('');
 
   function pick(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const picked = Array.from(input.files ?? []);
     error = '';
+
+    // Drop whatever was picked before. Leaving the old selection uploadable
+    // under a message about a different file is how you upload the wrong thing.
+    queue = [];
 
     const oversized = picked.find((f) => f.size > MAX_FILE_BYTES);
     if (oversized) {
@@ -50,7 +62,9 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    if (busy || queue.length === 0) return;
+    // `done` is checked here and not only on the button, because the name field
+    // is still focusable and Enter in a text input submits the form.
+    if (busy || done || queue.length === 0) return;
 
     error = '';
     busy = true;
@@ -68,9 +82,16 @@
       }
       // Put it in the grid first, so what the user sees matches what exists.
       onuploaded(model, { keepOpen: true });
-      partial = `${model.name} was created without ${failed.join(', ')}. You can add the rest once editing lands.`;
+      done = `${model.name} was created without ${failed.join(', ')}. You can add the rest once editing lands.`;
     } catch (failure) {
-      error = failure instanceof Error ? failure.message : 'Upload failed.';
+      const message = failure instanceof Error ? failure.message : 'Upload failed.';
+      if (failure instanceof UploadFailed && !failure.certain) {
+        // Might have landed. Offering Upload again here is what makes a second
+        // copy of a model nobody can delete.
+        done = `${message} The model may still have been created - reload the library and check before uploading it again.`;
+        return;
+      }
+      error = message;
     } finally {
       busy = false;
     }
@@ -139,12 +160,12 @@
       <p role="alert" class="mt-4 text-sm text-danger">{error}</p>
     {/if}
 
-    {#if partial}
-      <p role="alert" class="mt-4 text-sm text-danger">{partial}</p>
+    {#if done}
+      <p role="alert" class="mt-4 text-sm text-danger">{done}</p>
     {/if}
 
     <div class="mt-5 flex justify-end gap-2">
-      {#if partial}
+      {#if done}
         <button
           type="button"
           class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink"
