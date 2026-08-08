@@ -248,34 +248,51 @@ type modelOutput struct {
 	Body ModelDetail
 }
 
-type modelsOutput struct {
+// modelsPage is the list response. It is an envelope rather than a bare array
+// because the count line and the pager need the total and the page, and a
+// header would put half the answer somewhere the generated client does not
+// look.
+//
+// PageSize is echoed rather than assumed so 24 has exactly one source; the
+// client derives the page count from total and pageSize.
+type modelsPage struct {
 	// nullable:"false" for the same reason ModelDetail.Files carries it: huma
 	// types a Go slice as ["array","null"], the handler always returns a slice,
 	// and a contract that says null is possible makes every caller carry a
 	// branch for something that cannot arrive.
-	Body []Model `json:"body" nullable:"false"`
+	Items    []Model `json:"items" nullable:"false" doc:"The models on this page"`
+	Total    int     `json:"total" doc:"How many models matched, across every page"`
+	Page     int     `json:"page" doc:"The page served, which is the last page if a larger one was asked for"`
+	PageSize int     `json:"pageSize" doc:"How many models a full page holds"`
 }
 
-// listInput carries the sidebar's filters. All three are optional and ANDed;
-// none of them is the whole library.
+type modelsOutput struct {
+	Body modelsPage
+}
+
+// listInput carries the sidebar's filters, the search box, the sort control and
+// the pager. They are all optional and ANDed; none of them is the whole
+// library's first page, newest first.
 //
 // The ids are plain int64 with zero meaning "not filtering", because huma
 // refuses a pointer query parameter outright, and an id is generated always as
-// identity so zero is not one. Milestone 8's search, sort and pagination
-// parameters go here beside them, which is why the filter is a struct on the
-// service rather than three arguments.
+// identity so zero is not one. That is why the filter is a struct on the
+// service rather than a growing argument list.
 type listInput struct {
-	CategoryID    int64 `query:"categoryId" minimum:"1" doc:"Only models in this category"`
-	TagID         int64 `query:"tagId" minimum:"1" doc:"Only models carrying this tag"`
-	Uncategorized bool  `query:"uncategorized" doc:"Only models with no category"`
+	CategoryID    int64  `query:"categoryId" minimum:"1" doc:"Only models in this category"`
+	TagID         int64  `query:"tagId" minimum:"1" doc:"Only models carrying this tag"`
+	Uncategorized bool   `query:"uncategorized" doc:"Only models with no category"`
+	Q             string `query:"q" maxLength:"100" doc:"Only models whose name or description contains every word of this"`
+	Sort          string `query:"sort" enum:"newest,oldest,name,name-desc" doc:"Ordering. Defaults to newest."`
+	Page          int    `query:"page" minimum:"1" doc:"1-based page. A page past the end serves the last one."`
 }
 
 func registerList(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	huma.Register(api, huma.Operation{
 		OperationID: "list-models",
 		Summary:     "List models",
-		Description: "Every model in the caller's library, newest first. The " +
-			"optional filters narrow it and combine with AND.",
+		Description: "One page of the caller's library, newest first. The " +
+			"optional filters and search narrow it and combine with AND.",
 		Method:   http.MethodGet,
 		Path:     "/api/models",
 		Tags:     []string{"library"},
@@ -286,18 +303,28 @@ func registerList(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 		if err != nil {
 			return nil, huma.Error401Unauthorized("authentication required")
 		}
-		f := Filter{Uncategorized: in.Uncategorized}
+		f := Filter{
+			Uncategorized: in.Uncategorized,
+			Query:         in.Q,
+			Sort:          Sort(in.Sort),
+			Page:          in.Page,
+		}
 		if in.CategoryID != 0 {
 			f.CategoryID = &in.CategoryID
 		}
 		if in.TagID != 0 {
 			f.TagID = &in.TagID
 		}
-		models, err := svc.List(ctx, userID, f)
+		page, err := svc.List(ctx, userID, f)
 		if err != nil {
 			return nil, internalError("could not read the library", err)
 		}
-		return &modelsOutput{Body: models}, nil
+		return &modelsOutput{Body: modelsPage{
+			Items:    page.Models,
+			Total:    page.Total,
+			Page:     page.Page,
+			PageSize: page.PageSize,
+		}}, nil
 	})
 }
 

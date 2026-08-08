@@ -3,7 +3,6 @@ package app_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -254,10 +253,7 @@ func TestPinThumbnailOverridesAndClears(t *testing.T) {
 	// it is the one where a resolver that only ever runs the automatic rule
 	// still looks right in every other test here. The pinned G-code and the
 	// automatic pick are deliberately different files at this point.
-	var grid []library.Model
-	if err := json.Unmarshal([]byte(mustGet(t, c, "/api/models")), &grid); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
+	grid := decodeList(t, mustGet(t, c, "/api/models")).Items
 	if len(grid) != 1 || grid[0].ThumbnailFileID == nil || *grid[0].ThumbnailFileID != gcodeFile.ID {
 		t.Errorf("grid shows %v, want the pinned G-code (%d)", grid, gcodeFile.ID)
 	}
@@ -386,10 +382,7 @@ func TestDeletingThePinnedFileFallsBackToAutomatic(t *testing.T) {
 	}
 
 	// And the grid agrees with the detail screen.
-	var list []library.Model
-	if err := json.Unmarshal([]byte(mustGet(t, c, "/api/models")), &list); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
+	list := decodeList(t, mustGet(t, c, "/api/models")).Items
 	if len(list) != 1 || list[0].ThumbnailFileID == nil || *list[0].ThumbnailFileID != png.ID {
 		t.Errorf("grid shows %v, want the PNG (%d)", list, png.ID)
 	}
@@ -440,10 +433,7 @@ func TestListResolvesThumbnailsPerModel(t *testing.T) {
 		t.Fatal("second upload returned nothing")
 	}
 
-	var list []library.Model
-	if err := json.Unmarshal([]byte(mustGet(t, c, "/api/models")), &list); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
+	list := decodeList(t, mustGet(t, c, "/api/models")).Items
 	if len(list) != 2 {
 		t.Fatalf("got %d models, want 2", len(list))
 	}

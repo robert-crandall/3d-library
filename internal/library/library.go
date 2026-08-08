@@ -624,15 +624,103 @@ func (s *Service) stageOne(part *multipart.Part) (staged, error) {
 	return st, nil
 }
 
-// List returns the user's root models, newest first. Versions - models with a
+// Sort is a library ordering. The values are the API's, so the query parameter,
+// the client's select and this type all say the same words.
+type Sort string
+
+const (
+	SortNewest   Sort = "newest"
+	SortOldest   Sort = "oldest"
+	SortName     Sort = "name"
+	SortNameDesc Sort = "name-desc"
+)
+
+// PageSize is how many models a page holds. The design's grid is four across,
+// so 24 is six full rows.
+const PageSize = 24
+
+// orderBy maps a sort to its ORDER BY clause. Every clause ends in the id so
+// the order is total: created_at is not unique - an upload writes its models in
+// one transaction - and names are not unique at all, so without the tiebreak
+// two pages of the same result set could disagree about which row is 24th and
+// then repeat or skip it. The tiebreak follows the primary direction so the
+// sequence reads consistently rather than reversing within a group.
+//
+// This is a map of literals looked up by an enum huma has already validated,
+// never a string built from input, so the clause cannot carry anything the
+// server did not write.
+var orderBy = map[Sort]string{
+	SortNewest:   "m.created_at DESC, m.id DESC",
+	SortOldest:   "m.created_at ASC, m.id ASC",
+	SortName:     "lower(m.name) ASC, m.id ASC",
+	SortNameDesc: "lower(m.name) DESC, m.id DESC",
+}
+
+// Page is one page of the library, and what the list endpoint returns.
+//
+// Total is the number of models the filter matched, not the number on this
+// page and not the size of the library: the count line and the page count are
+// both derived from it. Page is the page actually served, which is not always
+// the page asked for - see List.
+type Page struct {
+	Models   []Model
+	Total    int
+	Page     int
+	PageSize int
+}
+
+// escapeLike escapes the characters LIKE treats as wildcards, so a search for
+// "50%" means 50 percent rather than "50 followed by anything". Backslash goes
+// first, or it would escape the escapes added after it.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "%", `\%`)
+	return strings.ReplaceAll(s, "_", `\_`)
+}
+
+// searchClause returns a WHERE fragment matching every whitespace-separated
+// token in q, appending each token's argument to args.
+//
+// Tokens are ANDed and each is matched against the name or the description, so
+// "dragon bracket" finds a model named "bracket" described as "for the dragon"
+// but not one that only mentions dragons. Print tips are deliberately not
+// searched: they are instructions you read after you have found the model, and
+// including them makes "supports" or "PLA" match most of the library.
+//
+// Substring rather than prefix or full text. At this scale - hundreds of root
+// models - a sequential ILIKE over two short columns is a fraction of a
+// millisecond, and "bracket" ought to find "wall bracket", which is exactly
+// what a tsvector's word-boundary matching would not do without a trigram index
+// on top of it.
+func searchClause(q string, args *[]any) string {
+	var clauses []string
+	for _, token := range strings.Fields(q) {
+		*args = append(*args, "%"+escapeLike(token)+"%")
+		n := len(*args)
+		clauses = append(clauses, fmt.Sprintf(
+			"(m.name ILIKE $%d ESCAPE '\\' OR m.description ILIKE $%d ESCAPE '\\')", n, n))
+	}
+	return strings.Join(clauses, " AND ")
+}
+
+// List returns one page of the user's root models. Versions - models with a
 // parent - are excluded here rather than filtered by the caller, because every
 // listing in this app is over roots.
 //
 // The filter's clauses are appended to one statement rather than composed from
-// separate queries, so milestone 8 adds LIMIT/OFFSET and a search predicate to
-// the same place. Tag membership is an EXISTS rather than a join, which keeps
-// the aggregate below counting files and not file-tag pairs.
-func (s *Service) List(ctx context.Context, userID int64, f Filter) ([]Model, error) {
+// separate queries, so the search predicate, the ordering and the page all
+// narrow the same rows. Tag membership is an EXISTS rather than a join, which
+// keeps the aggregate below counting files and not file-tag pairs.
+//
+// It runs two queries: the count, then the page. A count(*) OVER () window
+// would be one query, but it rides on the returned rows, so asking for a page
+// past the end would return no rows and therefore no total, and the count line
+// would read "0 models" for a library that has plenty. Counting first also
+// means the page can be clamped rather than served empty. The two are not in a
+// transaction: a concurrent upload between them could make the total disagree
+// with the page by one, and this is a single-user library where the only writer
+// is the person reading.
+func (s *Service) List(ctx context.Context, userID int64, f Filter) (Page, error) {
 	args := []any{userID}
 	where := "m.user_id = $1 AND m.parent_id IS NULL"
 	if f.CategoryID != nil {
@@ -647,6 +735,42 @@ func (s *Service) List(ctx context.Context, userID int64, f Filter) ([]Model, er
 		where += fmt.Sprintf(
 			" AND EXISTS (SELECT 1 FROM model_tags mt WHERE mt.model_id = m.id AND mt.tag_id = $%d)", len(args))
 	}
+	// No length cap here. huma's maxLength on the request is the one place that
+	// enforces it, and it counts characters; a second cap counting bytes would
+	// cut a multi-byte character in half and hand Postgres invalid UTF-8.
+	if q := strings.TrimSpace(f.Query); q != "" {
+		if clause := searchClause(q, &args); clause != "" {
+			where += " AND " + clause
+		}
+	}
+
+	page := Page{Page: f.Page, PageSize: PageSize, Models: []Model{}}
+	if err := s.db.QueryRow(ctx,
+		`SELECT count(*) FROM models m WHERE `+where, args...).Scan(&page.Total); err != nil {
+		return Page{}, fmt.Errorf("library: list count: %w", err)
+	}
+
+	// A page past the end serves the last page rather than nothing, because the
+	// only ways to get there are a stale bookmark and a hand-edited URL, and an
+	// empty grid under a count line saying 41 models is a worse answer than the
+	// end of the list. The response reports the page actually served, so the
+	// client's Previous and Next are relative to where it really is.
+	pageCount := (page.Total + PageSize - 1) / PageSize
+	if pageCount < 1 {
+		pageCount = 1
+	}
+	if page.Page < 1 {
+		page.Page = 1
+	}
+	if page.Page > pageCount {
+		page.Page = pageCount
+	}
+
+	order, ok := orderBy[f.Sort]
+	if !ok {
+		order = orderBy[SortNewest]
+	}
+	args = append(args, PageSize, (page.Page-1)*PageSize)
 
 	rows, err := s.db.Query(ctx,
 		`SELECT m.id, m.name, m.created_at,
@@ -655,9 +779,10 @@ func (s *Service) List(ctx context.Context, userID int64, f Filter) ([]Model, er
 		   LEFT JOIN model_files f ON f.model_id = m.id
 		  WHERE `+where+`
 		  GROUP BY m.id
-		  ORDER BY m.created_at DESC, m.id DESC`, args...)
+		  ORDER BY `+order+
+		fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
 	if err != nil {
-		return nil, fmt.Errorf("library: list: %w", err)
+		return Page{}, fmt.Errorf("library: list: %w", err)
 	}
 	defer rows.Close()
 
@@ -670,22 +795,23 @@ func (s *Service) List(ctx context.Context, userID int64, f Filter) ([]Model, er
 		var m Model
 		var pinned, categoryID *int64
 		if err := rows.Scan(&m.ID, &m.Name, &m.CreatedAt, &m.FileCount, &m.TotalSize, &pinned, &categoryID); err != nil {
-			return nil, fmt.Errorf("library: list: %w", err)
+			return Page{}, fmt.Errorf("library: list: %w", err)
 		}
 		pins[m.ID] = pinned
 		categories[m.ID] = categoryID
 		models = append(models, m)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("library: list: %w", err)
+		return Page{}, fmt.Errorf("library: list: %w", err)
 	}
 	if err := s.resolveListThumbnails(ctx, models, pins); err != nil {
-		return nil, err
+		return Page{}, err
 	}
 	if err := s.resolveListCategories(ctx, userID, models, categories); err != nil {
-		return nil, err
+		return Page{}, err
 	}
-	return models, nil
+	page.Models = models
+	return page, nil
 }
 
 // resolveListThumbnails fills in ThumbnailFileID for a whole page of models.

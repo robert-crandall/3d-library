@@ -690,10 +690,7 @@ func TestFilteringMatchesTheCounts(t *testing.T) {
 		{"a category and a tag", fmt.Sprintf("?categoryId=%d&tagId=%d", toys.ID, tag.ID), []string{"Toy A"}},
 		{"a category with nothing in it", fmt.Sprintf("?categoryId=%d&uncategorized=true", toys.ID), nil},
 	} {
-		var got []library.Model
-		if err := json.Unmarshal([]byte(mustGet(t, c, "/api/models"+tc.query)), &got); err != nil {
-			t.Fatalf("%s: decode: %v", tc.what, err)
-		}
+		got := decodeList(t, mustGet(t, c, "/api/models"+tc.query)).Items
 		names := make([]string, len(got))
 		for i, m := range got {
 			names[i] = m.Name
@@ -705,11 +702,8 @@ func TestFilteringMatchesTheCounts(t *testing.T) {
 
 	// The filtered list still carries the category, because the grid draws a
 	// colour square on every tile whether or not a filter is on.
-	var filtered []library.Model
-	if err := json.Unmarshal([]byte(mustGet(t, c,
-		fmt.Sprintf("/api/models?categoryId=%d", toys.ID))), &filtered); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	filtered := decodeList(t, mustGet(t, c,
+		fmt.Sprintf("/api/models?categoryId=%d", toys.ID))).Items
 	for _, m := range filtered {
 		if m.Category == nil || m.Category.Name != "Toys" {
 			t.Errorf("%s lost its category in the list: %+v", m.Name, m.Category)
@@ -771,10 +765,7 @@ func TestCountsAndFiltersIgnoreChildModels(t *testing.T) {
 		fmt.Sprintf("?categoryId=%d", cat.ID),
 		fmt.Sprintf("?tagId=%d", tag.ID),
 	} {
-		var got []library.Model
-		if err := json.Unmarshal([]byte(mustGet(t, c, "/api/models"+query)), &got); err != nil {
-			t.Fatalf("%s: decode: %v", query, err)
-		}
+		got := decodeList(t, mustGet(t, c, "/api/models"+query)).Items
 		if len(got) != 1 || got[0].Name != "Parent" {
 			t.Errorf("%s returned %d rows: %+v", query, len(got), got)
 		}

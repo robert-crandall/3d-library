@@ -4,7 +4,7 @@ import type { paths } from './api/schema';
  *  than written out, so a migration that changes the API breaks the build here
  *  instead of at runtime. */
 export type Model =
-  paths['/api/models']['get']['responses'][200]['content']['application/json'][number];
+  paths['/api/models']['get']['responses'][200]['content']['application/json']['items'][number];
 
 /** The detail endpoint's type: everything in Model plus the editable metadata
  *  and the files. A separate shape on the server, because a list of a few

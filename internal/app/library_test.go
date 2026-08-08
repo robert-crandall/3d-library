@@ -194,6 +194,36 @@ func (c *client) get(path string) (*http.Response, string) {
 	return resp, string(out)
 }
 
+// modelPage mirrors the list endpoint's envelope. Declared here rather than
+// reusing library.Page because the test has to read what went over the wire -
+// the JSON names and shape - and not the service's internal struct.
+type modelPage struct {
+	Items    []library.Model `json:"items"`
+	Total    int             `json:"total"`
+	Page     int             `json:"page"`
+	PageSize int             `json:"pageSize"`
+}
+
+// decodeList reads a list response.
+func decodeList(t *testing.T, body string) modelPage {
+	t.Helper()
+	var p modelPage
+	if err := json.Unmarshal([]byte(body), &p); err != nil {
+		t.Fatalf("decode list: %v (body %q)", err, body)
+	}
+	return p
+}
+
+// emptyList reports whether a list response is an empty page.
+//
+// It looks at the raw JSON as well as the decoded length, because a nil slice
+// encodes as null, the contract says it never is, and a decoded len() of zero
+// cannot tell the two apart.
+func emptyList(t *testing.T, body string) bool {
+	t.Helper()
+	return strings.Contains(body, `"items":[]`) && decodeList(t, body).Total == 0
+}
+
 // decodeModel reads a single-model response. Every endpoint that returns one
 // whole model - create, get, update - returns the detail shape; only the list
 // returns the summary.
@@ -287,10 +317,7 @@ func TestUploadThenBrowse(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list: got %d: %s", resp.StatusCode, body)
 	}
-	var listed []library.Model
-	if err := json.Unmarshal([]byte(body), &listed); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
+	listed := decodeList(t, body).Items
 	if len(listed) != 1 || listed[0].ID != created.ID {
 		t.Fatalf("list = %+v, want just the model that was created", listed)
 	}
@@ -302,12 +329,14 @@ func TestUploadThenBrowse(t *testing.T) {
 	// rather than the decoded struct: library.Model has no such fields, so
 	// decoding would drop them silently and this would pass no matter what the
 	// server sent.
-	var raw []map[string]json.RawMessage
+	var raw struct {
+		Items []map[string]json.RawMessage `json:"items"`
+	}
 	if err := json.Unmarshal([]byte(body), &raw); err != nil {
 		t.Fatalf("decode list keys: %v", err)
 	}
 	for _, key := range []string{"files", "description", "printTips", "sourceUrl"} {
-		if _, ok := raw[0][key]; ok {
+		if _, ok := raw.Items[0][key]; ok {
 			t.Errorf("list entry carries %q, which the grid does not render", key)
 		}
 	}
@@ -346,8 +375,8 @@ func TestEmptyLibraryIsAnEmptyArray(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list: got %d: %s", resp.StatusCode, body)
 	}
-	if strings.TrimSpace(body) != "[]" {
-		t.Errorf("body = %q, want []", body)
+	if !emptyList(t, body) {
+		t.Errorf("body = %q, want an empty page", body)
 	}
 }
 
@@ -366,8 +395,8 @@ func TestModelsAreScopedToTheirOwner(t *testing.T) {
 	created := decodeModel(t, body)
 
 	other := signIn(t, ts, "other@example.com")
-	if resp, body := other.get("/api/models"); strings.TrimSpace(body) != "[]" {
-		t.Errorf("other user's list = %q (status %d), want []", body, resp.StatusCode)
+	if resp, body := other.get("/api/models"); !emptyList(t, body) {
+		t.Errorf("other user's list = %q (status %d), want an empty page", body, resp.StatusCode)
 	}
 	resp, body = other.get(fmt.Sprintf("/api/models/%d", created.ID))
 	if resp.StatusCode != http.StatusNotFound {
@@ -427,7 +456,7 @@ func TestOversizedFileIsRejectedAndCleanedUp(t *testing.T) {
 	if len(final) != 0 || len(temp) != 0 {
 		t.Errorf("rejected upload left files behind: final=%v temp=%v", final, temp)
 	}
-	if resp, body := c.get("/api/models"); strings.TrimSpace(body) != "[]" {
+	if resp, body := c.get("/api/models"); !emptyList(t, body) {
 		t.Errorf("rejected upload created a model: %q (status %d)", body, resp.StatusCode)
 	}
 }
@@ -565,7 +594,7 @@ func TestNonFilePartsAreRejected(t *testing.T) {
 		})
 	}
 
-	if resp, body := c.get("/api/models"); strings.TrimSpace(body) != "[]" {
+	if resp, body := c.get("/api/models"); !emptyList(t, body) {
 		t.Errorf("a rejected upload created a model: %q (status %d)", body, resp.StatusCode)
 	}
 }
@@ -651,7 +680,7 @@ func TestFailedFirstFileCreatesNoModel(t *testing.T) {
 	if final, _, temp := blobs(t, dir); len(final) != 0 || len(temp) != 0 {
 		t.Errorf("left files behind: final=%v temp=%v", final, temp)
 	}
-	if strings.TrimSpace(mustGet(t, c, "/api/models")) != "[]" {
+	if !emptyList(t, mustGet(t, c, "/api/models")) {
 		t.Error("a failed first file created a model")
 	}
 }
@@ -1092,10 +1121,7 @@ func TestAbandonedUploadCommitsNothing(t *testing.T) {
 		return len(final) == 0 && len(temp) == 0
 	})
 
-	var models []library.Model
-	if err := json.Unmarshal([]byte(mustGet(t, c, "/api/models")), &models); err != nil {
-		t.Fatalf("decode library: %v", err)
-	}
+	models := decodeList(t, mustGet(t, c, "/api/models")).Items
 	if len(models) != 0 {
 		t.Errorf("got %d models, want 0 - an abandoned upload committed", len(models))
 	}
@@ -1442,7 +1468,7 @@ func TestDeletedModelSurvivesAnUnlinkableBlob(t *testing.T) {
 	if resp, _ := c.get(fmt.Sprintf("/api/models/%d", model.ID)); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("the model outlived a failed unlink: got %d", resp.StatusCode)
 	}
-	if strings.TrimSpace(mustGet(t, c, "/api/models")) != "[]" {
+	if !emptyList(t, mustGet(t, c, "/api/models")) {
 		t.Error("the library still lists a model whose blob could not be removed")
 	}
 }
