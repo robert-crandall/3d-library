@@ -1657,3 +1657,162 @@ func TestUnexpectedFailuresDoNotLeakInternals(t *testing.T) {
 		t.Errorf("422 should say what was wrong: %s", out)
 	}
 }
+
+// fixture reads one of the parser's real slicer captures. The integration tests
+// use the same bytes as the unit tests on purpose: a hand-written header would
+// let the wiring pass while the thing it is wired to could not read a file any
+// slicer actually writes.
+func fixture(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "gcode", "testdata", name))
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", name, err)
+	}
+	return string(b)
+}
+
+// Extraction happens once, during the upload, and everything after it is a read
+// of what was stored. So this checks both ends: the create response, which is
+// built from the value in memory, and the detail re-read, which is built from
+// the jsonb column. They are two different code paths and only one of them
+// survives a restart.
+func TestUploadExtractsSliceSettings(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	ts := newTestServer(t, pool, library.Options{Dir: t.TempDir()})
+	c := signIn(t, ts, "slicer@example.com")
+
+	ct, part := filePart(t, "plate-1.gcode", fixture(t, "prusaslicer.gcode"))
+	resp, body := c.post("Benchy", ct, part)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	created := decodeModel(t, body)
+
+	check := func(where string, m library.ModelDetail) {
+		t.Helper()
+		if len(m.Files) != 1 {
+			t.Fatalf("%s: got %d files, want 1", where, len(m.Files))
+		}
+		meta := m.Files[0].ExtractedMeta
+		if meta == nil {
+			t.Fatalf("%s: no extractedMeta on a PrusaSlicer file", where)
+		}
+		if meta.Slicer != "PrusaSlicer" || meta.SlicerVersion != "2.9.2" {
+			t.Errorf("%s: slicer = %q %q, want PrusaSlicer 2.9.2", where, meta.Slicer, meta.SlicerVersion)
+		}
+		// One value from the header block and one from the footer statistics,
+		// because they arrive through the two separate reads the parser makes
+		// and a window that came back empty would still leave the other set.
+		if meta.LayerHeightMm == nil || *meta.LayerHeightMm != 0.2 {
+			t.Errorf("%s: layerHeightMm = %s, want 0.2", where, show(meta.LayerHeightMm))
+		}
+		if meta.PrintTimeSeconds == nil || *meta.PrintTimeSeconds != 57 {
+			t.Errorf("%s: printTimeSeconds = %s, want 57", where, show(meta.PrintTimeSeconds))
+		}
+	}
+	check("create", created)
+	check("detail", decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", created.ID))))
+}
+
+// The two upload routes are separate handlers, and only one of them is exercised
+// by the test above. Without this, extraction could be wired into Create alone
+// and every file added to an existing model would silently lose its settings.
+func TestAddFileExtractsSliceSettings(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	ts := newTestServer(t, pool, library.Options{Dir: t.TempDir()})
+	c := signIn(t, ts, "addfile@example.com")
+
+	ct, part := filePart(t, "body.stl", "solid body")
+	resp, body := c.post("Benchy", ct, part)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: got %d: %s", resp.StatusCode, body)
+	}
+	model := decodeModel(t, body)
+
+	ct, part = filePart(t, "plate-1.gcode", fixture(t, "orcaslicer_2.3.gcode"))
+	resp, body = c.addFile(model.ID, ct, part)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("add file: got %d: %s", resp.StatusCode, body)
+	}
+
+	var added library.File
+	if err := json.Unmarshal([]byte(body), &added); err != nil {
+		t.Fatalf("decode added file: %v (body %q)", err, body)
+	}
+	meta := added.ExtractedMeta
+	if meta == nil {
+		t.Fatal("no extractedMeta on the added G-code file")
+	}
+	if meta.Slicer != "OrcaSlicer" || meta.SlicerVersion != "2.3.2-dev" {
+		t.Errorf("slicer = %q %q, want OrcaSlicer 2.3.2-dev", meta.Slicer, meta.SlicerVersion)
+	}
+
+	// And the STL uploaded alongside it must still have none, so this cannot
+	// pass by attaching the same settings to every file in the model.
+	detail := decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", model.ID)))
+	for _, f := range detail.Files {
+		got := f.ExtractedMeta != nil
+		if want := f.Filename == "plate-1.gcode"; got != want {
+			t.Errorf("%s: extractedMeta present = %v, want %v", f.Filename, got, want)
+		}
+	}
+}
+
+// show prints what a pointer field holds, because %v on a *float64 prints its
+// address and a failure message with an address in it says nothing.
+func show[T any](p *T) string {
+	if p == nil {
+		return "absent"
+	}
+	return fmt.Sprint(*p)
+}
+
+// A file we could not read must come back with the key absent, not present and
+// empty. The panel decides whether to render from whether the key is there, so
+// a `"extractedMeta": {}` would draw a heading with nothing under it - which
+// reads as a panel that failed rather than a file that never said.
+func TestFilesWithoutSliceSettingsOmitTheKey(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	ts := newTestServer(t, pool, library.Options{Dir: t.TempDir()})
+	c := signIn(t, ts, "nometa@example.com")
+
+	// The same fixture with its generator line gone: still valid G-code, still
+	// sniffed as G-code, but from a slicer we cannot name.
+	anonymous := strings.ReplaceAll(fixture(t, "prusaslicer.gcode"), "generated by PrusaSlicer", "written by SomeoneElse")
+
+	resp, body := c.upload("Benchy", map[string]string{
+		"body.stl":        "solid body",
+		"anonymous.gcode": anonymous,
+		// A pasted header saved beside the model. It parses perfectly well as
+		// G-code, and that is the point: what decides is the file's type, not
+		// whether its bytes happen to be readable. Without this the type check
+		// could be deleted and every test here would still pass.
+		"slicer-log.txt": fixture(t, "prusaslicer.gcode"),
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: got %d: %s", resp.StatusCode, body)
+	}
+	model := decodeModel(t, body)
+
+	// Read the raw JSON, not the decoded struct: a *gcode.Meta field decodes a
+	// missing key and a null to the same nil, so the struct cannot tell the two
+	// apart and this would pass either way.
+	var raw struct {
+		Files []map[string]json.RawMessage `json:"files"`
+	}
+	detail := mustGet(t, c, fmt.Sprintf("/api/models/%d", model.ID))
+	if err := json.Unmarshal([]byte(detail), &raw); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if len(raw.Files) != 3 {
+		t.Fatalf("got %d files, want 3", len(raw.Files))
+	}
+	for _, f := range raw.Files {
+		if _, ok := f["extractedMeta"]; ok {
+			t.Errorf("file %s carries extractedMeta: %s", f["filename"], f["extractedMeta"])
+		}
+	}
+}

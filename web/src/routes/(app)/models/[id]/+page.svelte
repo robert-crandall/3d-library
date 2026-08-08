@@ -5,7 +5,9 @@
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import EditModelDialog from '$lib/components/EditModelDialog.svelte';
   import UploadDialog from '$lib/components/UploadDialog.svelte';
+  import SliceSettings from '$lib/components/SliceSettings.svelte';
   import { formatBytes, formatDate, formatFileCount } from '$lib/format';
+  import { sliceRows } from '$lib/slice';
   import type { ModelDetail, ModelFile } from '$lib/upload';
 
   let { data }: { data: { id: number } } = $props();
@@ -17,6 +19,15 @@
   let status = $state<'loading' | 'ready' | 'failed' | 'missing'>('loading');
   let model = $state<ModelDetail>();
   let error = $state('');
+
+  // The first G-code file with settings we could read, in upload order, so
+  // that adding another file never moves the panel to a different one. A
+  // model with several plates is common and they are all sliced the same way;
+  // picking one and saying which is more useful than a per-file selector
+  // nobody asked for.
+  const sliced = $derived(
+    model?.files.find((file) => file.extractedMeta && sliceRows(file.extractedMeta).length > 0)
+  );
 
   let editing = $state(false);
   let adding = $state(false);
@@ -138,9 +149,9 @@
 
 <!--
   Screen 1c of the design, minus the parts no milestone has built yet: the 3D
-  viewer, slice settings, versions, category and tags. Those are omitted, not
-  rendered empty - a panel headed "Slice settings" with nothing in it reads as
-  broken, where an absent panel reads as a feature that is not here yet.
+  viewer, versions, category and tags. Those are omitted, not rendered empty - a
+  panel with nothing in it reads as broken, where an absent panel reads as a
+  feature that is not here yet.
 
   "Open in slicer" is on the design and is deliberately not built; the epic cut
   it from v1.
@@ -308,6 +319,10 @@
       </div>
 
       <div class="flex flex-col gap-5">
+        {#if sliced?.extractedMeta}
+          <SliceSettings meta={sliced.extractedMeta} filename={sliced.filename} />
+        {/if}
+
         {#if model.description}
           <section class="rounded-tile border border-line bg-surface px-4 py-3">
             <h2 class="text-sm font-semibold">Description</h2>

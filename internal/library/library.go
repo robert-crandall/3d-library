@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/robert-crandall/3d-library/internal/gcode"
 )
 
 const (
@@ -182,6 +185,15 @@ type File struct {
 	ContentType string    `json:"contentType"`
 	Size        int64     `json:"size"`
 	CreatedAt   time.Time `json:"createdAt"`
+
+	// ExtractedMeta is what the slicer said about the print, for a G-code file
+	// we could attribute to one. It is nil for every other file, and for a
+	// G-code file whose slicer we do not recognise.
+	//
+	// Derived, never edited. Re-slicing produces a new file, so there is no
+	// path by which this and the bytes on disk can disagree, and no need for
+	// the API to accept a value for it.
+	ExtractedMeta *gcode.Meta `json:"extractedMeta,omitempty"`
 }
 
 // staged is a file written to disk but not yet committed to the database.
@@ -192,6 +204,14 @@ type staged struct {
 	typ     string
 	ctype   string
 	size    int64
+
+	// meta and metaJSON are the same value twice: the struct goes back to the
+	// client in the upload response, the bytes go to Postgres. Encoding once at
+	// staging time keeps the failure - if there could ever be one - away from
+	// the transaction. json.RawMessage rather than []byte so pgx encodes it as
+	// jsonb rather than guessing at bytea.
+	meta     *gcode.Meta
+	metaJSON json.RawMessage
 }
 
 // Create stores one file and the model that owns it, in that order.
@@ -341,15 +361,18 @@ func (s *Service) AddFile(ctx context.Context, userID, modelID int64, parts *mul
 
 func insertFile(ctx context.Context, tx pgx.Tx, modelID int64, f staged) (File, error) {
 	var out File
+	// A nil metaJSON is a SQL NULL, which is what every non-G-code file and
+	// every unrecognised slicer stores.
 	err := tx.QueryRow(ctx,
-		`INSERT INTO model_files (model_id, storage_key, filename, type, content_type, size_bytes)
-		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
-		modelID, f.key, f.name, f.typ, f.ctype, f.size,
+		`INSERT INTO model_files (model_id, storage_key, filename, type, content_type, size_bytes, extracted_meta)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
+		modelID, f.key, f.name, f.typ, f.ctype, f.size, f.metaJSON,
 	).Scan(&out.ID, &out.CreatedAt)
 	if err != nil {
 		return File{}, fmt.Errorf("library: insert file: %w", err)
 	}
 	out.Filename, out.Type, out.ContentType, out.Size = f.name, f.typ, f.ctype, f.size
+	out.ExtractedMeta = f.meta
 	return out, nil
 }
 
@@ -441,6 +464,29 @@ func (s *Service) stageOne(part *multipart.Part) (staged, error) {
 		return st, fmt.Errorf("library: sniff: %w", readErr)
 	}
 
+	// Read the slice settings out of the same open handle, for the same reason
+	// the sniff does: ReadAt is absolute, so the write offset is irrelevant and
+	// nothing has to be reopened.
+	//
+	// The guards matter more than the call. A file that failed to write, or one
+	// that is about to be rejected for size, is not worth parsing - and `size`
+	// is the local variable rather than st.size, which is still zero here. The
+	// parse itself reads 144 KB at most however big the file is, and cannot
+	// fail: gcode.Parse reports "nothing found" rather than an error, so a G-code
+	// file this app does not understand still uploads.
+	if st.typ == "gcode" && err == nil && size <= s.maxFileBytes {
+		if meta, ok := gcode.Parse(f, size); ok {
+			// Marshal here, not at insert time. A Meta that will not encode
+			// must degrade to no metadata, never to a failed upload, and that
+			// decision belongs where there is still somewhere to put it.
+			if encoded, mErr := json.Marshal(meta); mErr == nil {
+				st.meta, st.metaJSON = &meta, encoded
+			} else {
+				slog.Warn("library: encode slice settings", "file", name, "error", mErr)
+			}
+		}
+	}
+
 	closeErr := f.Close()
 	if err != nil {
 		return st, fmt.Errorf("library: write: %w", err)
@@ -526,7 +572,7 @@ func (s *Service) Get(ctx context.Context, userID, id int64) (ModelDetail, error
 // has to render it rather than guess at a missing key.
 func (s *Service) loadFiles(ctx context.Context, m *ModelDetail) error {
 	rows, err := s.db.Query(ctx,
-		`SELECT id, filename, type, content_type, size_bytes, created_at
+		`SELECT id, filename, type, content_type, size_bytes, created_at, extracted_meta
 		   FROM model_files WHERE model_id = $1 ORDER BY id`, m.ID)
 	if err != nil {
 		return fmt.Errorf("library: get files: %w", err)
@@ -537,8 +583,20 @@ func (s *Service) loadFiles(ctx context.Context, m *ModelDetail) error {
 	m.TotalSize = 0
 	for rows.Next() {
 		var f File
-		if err := rows.Scan(&f.ID, &f.Filename, &f.Type, &f.ContentType, &f.Size, &f.CreatedAt); err != nil {
+		var meta []byte
+		if err := rows.Scan(&f.ID, &f.Filename, &f.Type, &f.ContentType, &f.Size, &f.CreatedAt, &meta); err != nil {
 			return fmt.Errorf("library: get files: %w", err)
+		}
+		// Unreadable stored metadata is not a broken model. The rest of the
+		// detail page is fine without it, so the file loses its settings panel
+		// and the request still succeeds.
+		if len(meta) > 0 {
+			var parsed gcode.Meta
+			if err := json.Unmarshal(meta, &parsed); err != nil {
+				slog.WarnContext(ctx, "library: decode slice settings", "file", f.ID, "error", err)
+			} else {
+				f.ExtractedMeta = &parsed
+			}
 		}
 		m.Files = append(m.Files, f)
 		m.TotalSize += f.Size

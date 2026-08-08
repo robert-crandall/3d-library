@@ -463,12 +463,45 @@ export interface components {
             contentType: string;
             /** Format: date-time */
             createdAt: string;
+            extractedMeta?: components["schemas"]["Meta"];
             filename: string;
             /** Format: int64 */
             id: number;
             /** Format: int64 */
             size: number;
             type: string;
+        };
+        Meta: {
+            /** Format: double */
+            bedTempC?: number;
+            /** Format: int64 */
+            bottomLayers?: number;
+            /** Format: double */
+            filamentCost?: number;
+            /** Format: double */
+            filamentGrams?: number;
+            /** Format: double */
+            filamentMm?: number;
+            filamentType?: string;
+            infillPattern?: string;
+            /** Format: double */
+            infillPercent?: number;
+            /** Format: double */
+            layerHeightMm?: number;
+            /** Format: double */
+            maxVolumetricSpeed?: number;
+            /** Format: double */
+            nozzleTempC?: number;
+            /** Format: int64 */
+            printTimeSeconds?: number;
+            printerModel?: string;
+            slicer?: string;
+            slicerVersion?: string;
+            supports?: boolean;
+            /** Format: int64 */
+            topLayers?: number;
+            /** Format: int64 */
+            wallLoops?: number;
         };
         Model: {
             /** Format: date-time */
