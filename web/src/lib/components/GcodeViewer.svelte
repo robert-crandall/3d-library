@@ -217,10 +217,17 @@
    * IdeaFormer fixture prints on a 45-degree belt and its moves run `Y988.179 Z-987.979`,
    * so `max[2]` there is -988. The declared Z says 4.00, which is true. On all four
    * normal fixtures the two agree exactly, so this costs nothing to prefer.
+   *
+   * The highest declared Z rather than the last one, because layers do not have to
+   * ascend: printing one object at a time (PrusaSlicer's "complete individual objects",
+   * Cura's "one at a time", Orca's "by object") restarts Z at the first layer for each
+   * object, so a plate whose shortest object prints last would report that object's
+   * height as the plate's.
    */
   function printSize(parsed: Toolpath): [number, number, number] {
     const { min, max } = parsed.bounds ?? { min: [0, 0, 0], max: [0, 0, 0] };
-    return [max[0] - min[0], max[1] - min[1], parsed.layers.at(-1)?.z ?? 0];
+    const height = parsed.layers.reduce((tallest, l) => Math.max(tallest, l.z), 0);
+    return [max[0] - min[0], max[1] - min[1], height];
   }
 </script>
 

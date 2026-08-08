@@ -114,6 +114,36 @@ describe('layer detection', () => {
     expect(parsed.layers.map((l) => l.z)).toEqual([0.2, 0.4]);
   });
 
+  it('lets a marker open a layer the Z never announced', () => {
+    // What membership of the marker set actually buys, which is less than it looks: with
+    // Z changing, the markerless fallback splits on the change alone, so all six real
+    // fixtures parse identically whether or not `AFTER_LAYER_CHANGE` is a marker. The one
+    // input where the marker decides is a boundary the slicer declares without moving Z,
+    // and there the marker wins - it is the slicer's own statement, and Z is a guess.
+    //
+    // The cost of that rule is on this same line: a file that extrudes between two
+    // markers of a pair (a multi-material wipe tower between `;LAYER_CHANGE` and
+    // `;AFTER_LAYER_CHANGE`) would get two layers at one Z. No fixture does - all 25
+    // real pairs in the Orca 1.5 file have nothing but a retract and a lift between
+    // them - so this is left as declared rather than guarded against a file none of the
+    // five slicers writes.
+    const body = (comment: string) =>
+      [
+        'G21',
+        'G90',
+        'M83',
+        'G1 X0 Y0 Z0.2',
+        'G1 X1 E1',
+        ';LAYER_CHANGE',
+        'G1 Z0.4',
+        'G1 X2 E1',
+        comment,
+        'G1 X3 E1',
+      ].join('\n');
+    expect(parse(body(';AFTER_LAYER_CHANGE')).layers.map((l) => l.z)).toEqual([0.2, 0.4, 0.4]);
+    expect(parse(body(';NOT_A_MARKER')).layers.map((l) => l.z)).toEqual([0.2, 0.4]);
+  });
+
   it('coalesces several markers with nothing extruded between them', () => {
     // No fixture writes two markers in a row today, but a profile with custom
     // layer-change G-code could, and a counter rather than a flag would open an empty

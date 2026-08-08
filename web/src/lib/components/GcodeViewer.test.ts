@@ -138,6 +138,43 @@ describe('GcodeViewer', () => {
     );
   });
 
+  it('reports the height of the tallest object, not the last one printed', async () => {
+    // Printing one object at a time - PrusaSlicer's "complete individual objects", Cura's
+    // "one at a time", Orca's "by object" - finishes each object before starting the next,
+    // so Z restarts at the first layer every time and the layer list does not ascend. A
+    // 5 mm object followed by a 1 mm object put 1 mm on the readout. The short one is
+    // deliberately last, which is the ordering that fails.
+    fetchMock.mockResolvedValue(
+      respond(
+        [
+          'G90',
+          'M83',
+          ';LAYER_CHANGE',
+          ';Z:0.2',
+          'G1 X0 Y0 Z0.2',
+          'G1 X10 E1',
+          ';LAYER_CHANGE',
+          ';Z:5',
+          'G1 X0 Y0 Z5',
+          'G1 X10 E1',
+          ';LAYER_CHANGE',
+          ';Z:0.2',
+          'G1 X40 Y0 Z0.2',
+          'G1 X50 E1',
+          ';LAYER_CHANGE',
+          ';Z:1',
+          'G1 X40 Y0 Z1',
+          'G1 X50 E1',
+        ].join('\n'),
+      ),
+    );
+    render(GcodeViewer, { modelId: 7, file });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('gcode-readout').textContent).toMatch('50 × 0 × 5 mm'),
+    );
+  });
+
   it('drops the previous print before parsing the next', async () => {
     // Not after: the scene holds the previous toolpath's buffers, up to 204 MB of them
     // at the segment cap, and keeping them through the next parse peaks at twice what
