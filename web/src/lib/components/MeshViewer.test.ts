@@ -42,6 +42,7 @@ function ok(buffer: ArrayBuffer) {
 const BOX = asciiStl(boxTriangles(20, 10, 5));
 
 beforeEach(() => {
+  viewerThrows = false;
   fetchMock.mockReset();
   show.mockClear();
   setShading.mockClear();
@@ -205,5 +206,23 @@ describe('MeshViewer', () => {
 
     expect((await screen.findByRole('alert')).textContent).toMatch(/could not start the 3D preview/);
     expect(screen.queryByTestId('mesh-readout')).toBeNull();
+  });
+
+  it('applies a shading chosen before the mesh arrives', async () => {
+    // The buttons work while the file is still downloading. The viewer has to be told the
+    // choice before it is handed a mesh, because the mesh is built with whichever material
+    // is active at the time - otherwise the button reads X-ray over a solid render.
+    let release: (value: unknown) => void = () => {};
+    fetchMock.mockReturnValue(new Promise((resolve) => (release = resolve)));
+
+    render(MeshViewer, { modelId: 7, files: [stl] });
+    await fireEvent.click(screen.getByRole('button', { name: 'X-ray' }));
+    release(ok(asciiStl(boxTriangles(1, 2, 3))));
+
+    await waitFor(() => expect(show).toHaveBeenCalled());
+    expect(setShading).toHaveBeenCalledWith('xray');
+    expect(setShading.mock.invocationCallOrder[0]).toBeLessThan(
+      show.mock.invocationCallOrder[0],
+    );
   });
 });

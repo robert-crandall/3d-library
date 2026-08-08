@@ -78,6 +78,7 @@ export function createViewer(canvas: HTMLCanvasElement): Viewer {
   };
 
   let mesh: Mesh | undefined;
+  let active: Shading = 'solid';
   let disposed = false;
 
   const render = () => {
@@ -129,7 +130,9 @@ export function createViewer(canvas: HTMLCanvasElement): Viewer {
         mesh.geometry.dispose();
         mesh.geometry = geometry;
       } else {
-        mesh = new Mesh(geometry, materials.solid);
+        // The chosen shading, not solid: the buttons are usable while the first mesh is
+        // still downloading, and building it solid would leave the pressed button lying.
+        mesh = new Mesh(geometry, materials[active]);
         scene.add(mesh);
       }
 
@@ -151,6 +154,7 @@ export function createViewer(canvas: HTMLCanvasElement): Viewer {
     },
 
     setShading(shading) {
+      active = shading;
       if (mesh) mesh.material = materials[shading];
       render();
     },

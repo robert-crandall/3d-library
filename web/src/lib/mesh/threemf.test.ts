@@ -243,8 +243,9 @@ describe('parse3mf: part resolution', () => {
         `<resources><object id="1" type="model">${BOX}</object></resources><build><item objectid="1"/></build>`,
       ),
     });
-    // Falls back to the conventional path rather than resolving to something outside.
-    expect(sizeOf3mf(buffer)).toEqual([20, 10, 5]);
+    // Refused, not quietly redirected to the conventional path: the package named a root
+    // and that root is not something this file is allowed to reach.
+    expect(() => parse3mf(buffer)).toThrow(/corrupt/i);
   });
 
   it('refuses a file with no readable root part', () => {
@@ -441,4 +442,83 @@ describe('parse3mf: bounds on hostile input', () => {
 
     expect(parsed.positions.length).toBe(count * 3);
   }, 60_000);
+
+  it('reads a relationship written with a namespace prefix', () => {
+    // The OPC prefix is the producer's choice. Matching on the tag name misses
+    // `<r:Relationship>`, and the package then falls back to the conventional path -
+    // which for a file rooted elsewhere means rendering nothing at all.
+    const rels =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<r:Relationships xmlns:r="http://schemas.openxmlformats.org/package/2006/relationships">` +
+      `<r:Relationship Id="rel0" Target="/3D/elsewhere.model"` +
+      ` Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>` +
+      `</r:Relationships>`;
+    const buffer = zip3mf({
+      '_rels/.rels': rels,
+      '3D/elsewhere.model': modelXml(
+        `<resources><object id="1" type="model">${boxMeshXml(4, 6, 8)}</object></resources>` +
+          `<build><item objectid="1"/></build>`,
+      ),
+    });
+
+    const size = sizeOf(boundsOf(parse3mf(buffer).positions));
+
+    expect(size[0]).toBeCloseTo(4);
+    expect(size[1]).toBeCloseTo(6);
+    expect(size[2]).toBeCloseTo(8);
+  });
+
+  it('refuses a package whose declared root part is missing', () => {
+    // Falling back to the conventional path here would render whatever happens to sit
+    // there and label it with this file's name - a different mesh with different
+    // dimensions, presented as if it were the one asked for.
+    const buffer = zip3mf({
+      '_rels/.rels': relsXml('/3D/gone.model'),
+      '3D/3dmodel.model': modelXml(
+        `<resources><object id="1" type="model">${boxMeshXml(1, 1, 1)}</object></resources>` +
+          `<build><item objectid="1"/></build>`,
+      ),
+    });
+
+    expect(() => parse3mf(buffer)).toThrow(/corrupt/i);
+  });
+
+  it('refuses a vertex that omits a coordinate', () => {
+    // Number(null) is 0, so an absent z silently flattens the vertex onto the origin
+    // plane and the file renders as a subtly wrong shape with wrong dimensions.
+    const mesh =
+      `<mesh><vertices>` +
+      `<vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1"/>` +
+      `</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh>`;
+
+    expect(() =>
+      parse3mf(coreOnly3mf({ objects: `<object id="1" type="model">${mesh}</object>` })),
+    ).toThrow(/corrupt/i);
+  });
+
+  it('refuses a triangle that omits a corner', () => {
+    // Number(null) is 0, which is a perfectly valid vertex index - so the triangle would
+    // be silently rewritten to point at vertex zero rather than reported.
+    const mesh =
+      `<mesh><vertices>` +
+      `<vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/>` +
+      `</vertices><triangles><triangle v1="0" v2="1"/></triangles></mesh>`;
+
+    expect(() =>
+      parse3mf(coreOnly3mf({ objects: `<object id="1" type="model">${mesh}</object>` })),
+    ).toThrow(/corrupt/i);
+  });
+
+  it('refuses a coordinate that is finite but overflows a float32', () => {
+    // 1e100 passes Number.isFinite and then becomes Infinity in the Float32Array the
+    // positions live in, which reaches the camera as NaN and shows as a blank canvas.
+    const mesh =
+      `<mesh><vertices>` +
+      `<vertex x="0" y="0" z="0"/><vertex x="1e100" y="0" z="0"/><vertex x="0" y="1" z="0"/>` +
+      `</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh>`;
+
+    expect(() =>
+      parse3mf(coreOnly3mf({ objects: `<object id="1" type="model">${mesh}</object>` })),
+    ).toThrow(/corrupt/i);
+  });
 });

@@ -104,4 +104,22 @@ describe('parseStl', () => {
     const parsed = parseStl(new TextEncoder().encode(text).buffer as ArrayBuffer);
     expect(Array.from(parsed.positions)).toEqual([0, 0, 0, 1, 0, 0, 0, 1, 0]);
   });
+
+  it('reads a binary file whose header says "solid" and mentions vertices', () => {
+    // The 80-byte header is arbitrary text. A file that starts with "solid", happens to
+    // carry the word "vertex", and has trailing bytes defeats both halves of the
+    // heuristic: the length test fails and the prefix test votes ASCII. Before this it
+    // was reported as corrupt, and with three parseable numbers in the header it would
+    // have rendered the header instead of the facets.
+    const buffer = binaryStl(boxTriangles(3, 5, 7), {
+      header: 'solid exported by a tool that writes vertex counts here',
+      trailing: 6,
+    });
+
+    const size = sizeOf(boundsOf(parseStl(buffer).positions));
+
+    expect(size[0]).toBeCloseTo(3);
+    expect(size[1]).toBeCloseTo(5);
+    expect(size[2]).toBeCloseTo(7);
+  });
 });

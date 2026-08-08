@@ -11,6 +11,7 @@ import type { ParsedMesh } from './geometry';
 
 const CORE_NS = 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02';
 const PRODUCTION_NS = 'http://schemas.microsoft.com/3dmanufacturing/production/2015/06';
+const RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
 
 /**
  * Total bytes of zip entries we are willing to hold. The largest real project file in
@@ -117,11 +118,22 @@ function findRootPart(parts: Record<string, Uint8Array>): string {
   const rels = parts['_rels/.rels'];
   if (rels) {
     const document = parseXml(rels, '_rels/.rels');
-    for (const rel of Array.from(document.getElementsByTagName('Relationship'))) {
-      if (!rel.getAttribute('Type')?.endsWith('/3dmodel')) continue;
-      const target = rel.getAttribute('Target');
-      const resolved = target ? resolvePart(target) : null;
-      if (resolved && parts[resolved]) return resolved;
+    // By namespace, not by tag name: the OPC prefix is the producer's choice, so a
+    // package using `<r:Relationship>` is legal and getElementsByTagName misses it.
+    const declared = Array.from(
+      document.getElementsByTagNameNS(RELS_NS, 'Relationship'),
+    ).filter((rel) => rel.getAttribute('Type')?.endsWith('/3dmodel'));
+
+    if (declared.length > 0) {
+      for (const rel of declared) {
+        const target = rel.getAttribute('Target');
+        const resolved = target ? resolvePart(target) : null;
+        if (resolved && parts[resolved]) return resolved;
+      }
+      // The package said where its model is and that part is not here. Falling through to
+      // the conventional path would render whatever happens to sit there - a different
+      // mesh, with different dimensions, presented as if it were this file.
+      throw new Error(CORRUPT);
     }
   }
   if (parts['3D/3dmodel.model']) return '3D/3dmodel.model';
@@ -185,15 +197,31 @@ function nestedChildren(parent: Element, wrapper: string, name: string): Element
   return out;
 }
 
+/**
+ * A required numeric attribute.
+ *
+ * `Number(null)` and `Number('')` are both 0, so an absent `z` would silently place the
+ * vertex on the origin plane and an absent `v1` would resolve to a real vertex. Float32
+ * is checked as well as Float64: 1e100 is finite but becomes Infinity in the buffer these
+ * end up in, which reaches the camera as NaN and shows as a blank canvas.
+ */
+function requiredNumber(node: Element, name: string): number {
+  const raw = node.getAttribute(name);
+  if (raw === null || raw.trim() === '') throw new Error(CORRUPT);
+  const value = Number(raw);
+  if (!Number.isFinite(value) || !Number.isFinite(Math.fround(value))) {
+    throw new Error(CORRUPT);
+  }
+  return value;
+}
+
 function readMesh(mesh: Element): Mesh {
   const vertexNodes = nestedChildren(mesh, 'vertices', 'vertex');
   const vertices = new Float64Array(vertexNodes.length * 3);
   for (let i = 0; i < vertexNodes.length; i++) {
     const node = vertexNodes[i];
     for (const [axis, name] of (['x', 'y', 'z'] as const).entries()) {
-      const value = Number(node.getAttribute(name));
-      if (!Number.isFinite(value)) throw new Error(CORRUPT);
-      vertices[i * 3 + axis] = value;
+      vertices[i * 3 + axis] = requiredNumber(node, name);
     }
   }
 
@@ -202,7 +230,7 @@ function readMesh(mesh: Element): Mesh {
   for (let i = 0; i < triangleNodes.length; i++) {
     const node = triangleNodes[i];
     for (const [corner, name] of (['v1', 'v2', 'v3'] as const).entries()) {
-      const index = Number(node.getAttribute(name));
+      const index = requiredNumber(node, name);
       // An out-of-range index would read undefined out of the vertex array and put NaN
       // into the buffer, which shows up as a blank canvas and NaN dimensions rather than
       // as an error - so check it here, where we can still say what went wrong.

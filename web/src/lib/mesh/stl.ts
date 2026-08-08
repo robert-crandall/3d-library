@@ -92,11 +92,22 @@ export function parseStl(buffer: ArrayBuffer): ParsedMesh {
     positions = parseBinary(bytes);
   } else {
     // The heuristic cannot classify a binary file that both starts with "solid" and
-    // carries trailing bytes: the length test fails and the prefix test says ASCII. Such
-    // a file decodes to text containing no "vertex" line, so an empty ASCII parse is the
-    // signal to try binary before calling it corrupt.
+    // carries trailing bytes: the length test fails and the prefix test says ASCII. Both
+    // tokens are required rather than just "vertex", because a binary file's 80-byte
+    // header is arbitrary and may contain the word; an ASCII body always has facets too.
     const text = new TextDecoder().decode(bytes);
-    positions = /vertex\s/.test(text) ? parseAscii(text) : parseBinary(bytes);
+    if (/facet\s/.test(text) && /vertex\s/.test(text)) {
+      try {
+        positions = parseAscii(text);
+      } catch {
+        // A binary file carrying both words in its header lands here. Its facets are the
+        // real geometry, so prefer them; a genuinely truncated ASCII file has no plausible
+        // facet count at byte 80 either, and still ends up reported as corrupt.
+        positions = parseBinary(bytes);
+      }
+    } else {
+      positions = parseBinary(bytes);
+    }
   }
 
   // An STL has no unit field. Millimetres is universal in 3D printing - every slicer
