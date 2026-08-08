@@ -105,7 +105,7 @@ describe('library page', () => {
 
     render(LibraryPage);
     await fireEvent.click(await screen.findByRole('button', { name: 'Upload your first model' }));
-    const dialog = screen.getByRole('form', { name: 'Upload a model' });
+    const dialog = screen.getByRole('dialog', { name: 'Upload a model' });
     await fireEvent.change(within(dialog).getByLabelText('Files'), {
       target: { files: [new File(['solid'], 'clip.stl')] }
     });
@@ -116,7 +116,7 @@ describe('library page', () => {
     await fireEvent.click(reload);
 
     await waitFor(() => expect(get.mock.calls.length).toBe(before + 1));
-    expect(screen.queryByRole('form', { name: 'Upload a model' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Upload a model' })).toBeNull();
     vi.unstubAllGlobals();
   });
 
@@ -133,7 +133,7 @@ describe('library page', () => {
 
     render(LibraryPage);
     await fireEvent.click(await screen.findByRole('button', { name: 'Upload your first model' }));
-    const dialog = screen.getByRole('form', { name: 'Upload a model' });
+    const dialog = screen.getByRole('dialog', { name: 'Upload a model' });
     await fireEvent.change(within(dialog).getByLabelText('Files'), {
       target: { files: [new File(['solid'], 'clip.stl')] }
     });
@@ -163,7 +163,7 @@ describe('library page', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
 
-    expect(screen.getByRole('form', { name: 'Upload a model' })).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Upload a model' })).toBeTruthy();
   });
 
   // The seam that matters: a finished upload has to appear in the grid without
@@ -184,7 +184,7 @@ describe('library page', () => {
     render(LibraryPage);
     await fireEvent.click(await screen.findByRole('button', { name: 'Upload your first model' }));
 
-    const dialog = screen.getByRole('form', { name: 'Upload a model' });
+    const dialog = screen.getByRole('dialog', { name: 'Upload a model' });
     await fireEvent.change(within(dialog).getByLabelText('Files'), {
       target: { files: [new File(['solid'], 'clip.stl')] }
     });
@@ -192,7 +192,7 @@ describe('library page', () => {
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Cable clip' })).toBeTruthy());
     expect(screen.getByText('1 file · 2.0 KB')).toBeTruthy();
-    expect(screen.queryByRole('form', { name: 'Upload a model' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Upload a model' })).toBeNull();
     vi.unstubAllGlobals();
   });
 });

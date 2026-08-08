@@ -118,14 +118,22 @@
 
   Native <dialog> is not used because it needs an effect to call showModal(),
   and the one thing it buys - focus trapping - is not worth that when the
-  content is three controls.
+  content is three controls. The roles it would have set are set by hand.
+
+  The file list is deliberately unkeyed: it is built once by `pick`, replaced
+  entry-by-entry at the same index as uploads progress, and never reordered or
+  spliced. A key here would only be a claim about identity that nothing needs -
+  and keying on the filename was worse than nothing, because two files can share
+  a basename and Svelte would then reuse the wrong row's state.
 -->
 <div class="fixed inset-0 grid place-items-center bg-black/40 p-4">
-  <form
+  <div
     class="w-full max-w-md rounded-tile border border-line bg-surface p-5"
-    onsubmit={submit}
+    role="dialog"
+    aria-modal="true"
     aria-labelledby="upload-title"
   >
+    <form onsubmit={submit}>
     <h2 id="upload-title" class="text-lg font-semibold">Upload a model</h2>
 
     <label class="mt-4 block text-sm font-medium" for="model-name">Name</label>
@@ -151,7 +159,7 @@
 
     {#if queue.length > 0}
       <ul class="mt-4 space-y-1 text-sm">
-        {#each queue as item (item.file.name)}
+        {#each queue as item}
           <li class="flex items-baseline justify-between gap-3">
             <span class="min-w-0 truncate">{item.file.name}</span>
             <span
@@ -205,4 +213,5 @@
       {/if}
     </div>
   </form>
+  </div>
 </div>

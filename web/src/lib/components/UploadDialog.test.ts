@@ -28,6 +28,50 @@ async function submit() {
 }
 
 describe('UploadDialog', () => {
+  // Screen readers need to be told this is a modal; the markup is a plain div,
+  // so nothing says so unless it is said explicitly.
+  it('announces itself as a modal dialog', () => {
+    render(UploadDialog, { onclose: vi.fn(), onuploaded: vi.fn() });
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(dialog.getAttribute('aria-labelledby')).toBe('upload-title');
+  });
+
+  // Two files can share a basename - different folders, or a rename that only
+  // changed the path. Keying the list on the filename made Svelte treat them as
+  // the same row, so one file's progress overwrote the other's.
+  it('gives same-named files their own rows', async () => {
+    // Never resolves: the point is the state *during* the upload, and a
+    // resolved upload closes the dialog before there is anything to look at.
+    mocked.mockImplementation(
+      (_name, _files, onState) =>
+        new Promise(() => {
+          onState(0, 'done');
+        })
+    );
+
+    render(UploadDialog, { onclose: vi.fn(), onuploaded: vi.fn() });
+
+    const input = screen.getByLabelText('Files') as HTMLInputElement;
+    Object.defineProperty(input, 'files', {
+      value: [
+        new File(['solid'], 'part.stl', { type: 'model/stl' }),
+        new File(['solid'], 'part.stl', { type: 'model/stl' })
+      ],
+      configurable: true
+    });
+    await fireEvent.change(input);
+
+    expect(screen.getAllByText('part.stl')).toHaveLength(2);
+
+    await submit();
+    // The first file is uploaded and the second is still queued. Keyed on the
+    // filename, both rows were the same row and read the same.
+    await waitFor(() => expect(screen.getAllByText('Uploaded')).toHaveLength(1));
+    expect(screen.getAllByText('Queued')).toHaveLength(1);
+  });
+
   // The case that used to lose data. uploadModel resolves with a model *and* a
   // list of files that did not make it; the model exists on the server, so the
   // dialog has to hand it to the grid. The old version threw the model away,
