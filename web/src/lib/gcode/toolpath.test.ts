@@ -220,6 +220,32 @@ describe('layer detection', () => {
     expect(parsed.layers.at(-1)?.travelEnd).toBe(parsed.travelSegments);
   });
 
+  it('gives the layer-change travel to the layer it moves to when the slicer marks it twice', () => {
+    // OrcaSlicer 1.5 emits `;LAYER_CHANGE` and then `;AFTER_LAYER_CHANGE` with the Z lift
+    // between them, verbatim as below. Recording the travel count at every marker rather
+    // than at the first re-records it *after* that lift, which is the whole bug the count
+    // exists to prevent - so the lift went back onto the layer below.
+    const parsed = parse(
+      [
+        PRIMED,
+        ';LAYER_CHANGE',
+        ';Z:0.4',
+        ';BEFORE_LAYER_CHANGE',
+        'G1 Z0.4', // travel 1 - the lift, and it belongs to layer two
+        ';AFTER_LAYER_CHANGE',
+        'G1 X9 Y9', // travel 2 - also layer two
+        'G1 X10 Y9 E2',
+        ';LAYER_CHANGE',
+        'G1 Z0.6',
+        'G1 X2 E3',
+      ].join('\n'),
+    );
+    expect(parsed.layers).toHaveLength(3);
+    expect(parsed.layers[0].travelEnd).toBe(0);
+    expect(parsed.layers[1].travelEnd).toBe(2);
+    expect(parsed.layers.at(-1)?.travelEnd).toBe(parsed.travelSegments);
+  });
+
   it('leaves the end block with the last layer that printed', () => {
     // `;LAYER_CHANGE` then a park with no extrusion after it opens no new layer, so there
     // is nothing to hand the trailing travel to. Dropping it instead would leave segments

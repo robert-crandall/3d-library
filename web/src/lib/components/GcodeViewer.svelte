@@ -109,13 +109,21 @@
     inFlight?.abort();
     const mine = ++generation;
 
+    // Released before anything below can return early, not when the next file draws.
+    // The scene holds the previous print's buffers, and at the segment cap that is
+    // 204 MB: keeping them through the next parse would peak at twice the cap, and
+    // keeping them behind a refusal message would hold them for as long as the message
+    // is on screen.
+    toolpath = undefined;
+    pending = undefined;
+    viewer?.clear();
+
     if (viewerBroken) {
       // Checked before the fetch as well as after it: once the renderer is gone, every
       // later file in the strip would otherwise download in full to reach the same
       // sentence.
       status = 'failed';
       error = NO_VIEWER;
-      toolpath = undefined;
       return;
     }
 
@@ -126,19 +134,12 @@
       error = `This file is ${formatBytes(current.size)}. G-code over ${formatBytes(
         MAX_GCODE_BYTES,
       )} is too large to preview - download it to open in a slicer.`;
-      toolpath = undefined;
       return;
     }
 
     status = 'loading';
     error = '';
     progress = undefined;
-    toolpath = undefined;
-    pending = undefined;
-    // Released now, not when the next file draws. The scene holds the previous print's
-    // buffers, and at the segment cap that is 204 MB kept alive through the whole of the
-    // next parse - two large plates of one project would then peak at twice the cap.
-    viewer?.clear();
 
     const controller = new AbortController();
     inFlight = controller;

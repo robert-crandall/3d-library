@@ -699,14 +699,20 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
     if (trimmed.length === 0) return;
     const upper = trimmed.toUpperCase();
     if (LAYER_MARKERS.has(upper) || (upper.startsWith('LAYER:') && upper.length > 6)) {
-      pending = true;
       sawMarker = true;
       // The layer does not close until the next extrusion, because that is the first
       // point the new layer's Z is known. Everything between here and there is the
       // layer change itself - lift, wipe, reposition - and belongs to the layer being
       // moved *to*. Recording the count now is what keeps those travels from being
       // drawn on the layer below them.
-      travelAtMarker = travelSegments;
+      //
+      // Only on the *first* marker of a run, which is what `pending` already means.
+      // Slicers emit more than one: OrcaSlicer 1.5 writes `;LAYER_CHANGE` and then
+      // `;AFTER_LAYER_CHANGE`, with the Z lift in between. Re-recording at the second
+      // one puts that lift back on the layer below, which is the bug this line exists
+      // to prevent.
+      if (!pending) travelAtMarker = travelSegments;
+      pending = true;
       return;
     }
     if (upper.startsWith('Z:')) {
@@ -891,8 +897,8 @@ export function skipSegments(
  *
  * Here rather than beside the renderer because this is the one number the scrub slider
  * is, and off-by-one in it is the likeliest bug in the viewer - the canvas would look
- * plausible either way. Out-of-range indices clamp rather than throw: the slider is
- * driven by a number input the user can type into.
+ * plausible either way. Out-of-range indices clamp rather than throw, because the caller
+ * holds the index across a file switch and the next file is a different height.
  */
 export function layerRange(
   toolpath: Toolpath,

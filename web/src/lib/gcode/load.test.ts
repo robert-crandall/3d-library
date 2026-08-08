@@ -211,4 +211,31 @@ describe('loadToolpath', () => {
     await loadToolpath('/f.gcode');
     expect(cancelled).toBe(false);
   });
+  it('parses a buffered response longer than one slice', async () => {
+    // The no-body path exists for an environment without streaming fetch, and it feeds
+    // the parser in 64 KB pieces rather than handing over the whole buffer: `push`
+    // decodes what it is given into a string, so a 256 MB file - the largest this
+    // accepts - would transiently cost that again in text, on the one path with no
+    // back-pressure at all. That saving is not observable from here, but the risk the
+    // slicing introduces is: a command cut in half at a slice boundary. This body is
+    // several slices long and its every layer has to survive.
+    const layers = 8000;
+    const lines = ['G90', 'M83', 'G1 X0 Y0 Z0.2'];
+    for (let n = 0; n < layers; n++) {
+      lines.push(';LAYER_CHANGE', `G1 X0 Y0 Z${(0.2 * (n + 1)).toFixed(3)}`, `G1 X10 Y${n} E1`);
+    }
+    const bytes = new TextEncoder().encode(lines.join('\n'));
+    expect(bytes.byteLength).toBeGreaterThan(3 * 64 * 1024);
+
+    stub({
+      ok: true,
+      headers: new Headers(),
+      body: null,
+      arrayBuffer: async () => bytes.buffer,
+    } as unknown as Response);
+
+    const toolpath = await loadToolpath('/f.gcode');
+    expect(toolpath.layers).toHaveLength(layers);
+    expect(toolpath.extrusionSegments).toBe(layers);
+  });
 });

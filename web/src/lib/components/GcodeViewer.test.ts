@@ -155,6 +155,22 @@ describe('GcodeViewer', () => {
     expect(clear.mock.invocationCallOrder[0]).toBeLessThan(fetchMock.mock.invocationCallOrder[0]);
   });
 
+  it('drops the previous print when the next file is refused unread', async () => {
+    // The two early returns run before any of the loading state is set, so a release
+    // that lives with that state never happens on this path. The 204 MB then sits
+    // behind the refusal message for as long as it is on screen, which is until the
+    // reader picks a different file - and picking the oversized one is exactly what
+    // someone does when they are short of memory.
+    const { rerender } = render(GcodeViewer, { modelId: 7, file });
+    await waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    clear.mockClear();
+
+    await rerender({ modelId: 7, file: { ...file, id: 13, size: MAX_GCODE_BYTES + 1 } });
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('too large'));
+    expect(clear).toHaveBeenCalledTimes(1);
+  });
+
   it('opens on the finished print, not on the first layer', async () => {
     // The whole object is what someone recognises. The slider is for taking it apart
     // afterwards, so starting at the bottom shows a single outline of something

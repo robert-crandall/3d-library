@@ -61,9 +61,15 @@ export async function loadToolpath(url: string, options: LoadOptions = {}): Prom
   const parser = createToolpathParser();
   const body = response.body;
   if (!body) {
-    // No streaming body: a test double, or a browser that has buffered the whole
-    // response already. Parsing it in one go is correct, just without progress.
-    parser.push(new Uint8Array(await response.arrayBuffer()));
+    // No streaming body: a test double, or an environment without streaming fetch.
+    // Fed in slices the size of a real stream's chunks rather than in one piece,
+    // because `push` decodes what it is given into a string - handing it 256 MB of
+    // bytes would transiently cost that again in text. The parser already handles a
+    // command split across a chunk boundary, since a real stream splits them too.
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    for (let at = 0; at < bytes.byteLength; at += FALLBACK_CHUNK_BYTES) {
+      parser.push(bytes.subarray(at, at + FALLBACK_CHUNK_BYTES));
+    }
     return parser.finish();
   }
 
@@ -108,6 +114,9 @@ export async function loadToolpath(url: string, options: LoadOptions = {}): Prom
 
 /** One 60 Hz frame. Long enough that yielding is rare, short enough that a click lands. */
 const FRAME_MS = 16;
+
+/** What a real stream hands over at a time, so the buffered path behaves like one. */
+const FALLBACK_CHUNK_BYTES = 64 * 1024;
 
 function now(): number {
   return typeof performance === 'undefined' ? Date.now() : performance.now();
