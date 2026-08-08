@@ -602,7 +602,7 @@ describe('refusals', () => {
   });
 
   it('refuses a coordinate too large to hold in the geometry', () => {
-    // Positions go to the GPU as Float32, where anything past ~3.4e38 becomes Infinity;
+    // Positions go to the GPU as Float32, where a large enough number stops being finite;
     // the camera fit then divides into NaN and the panel goes blank with no message,
     // which is the worst way to fail. Written-out digits, not `1e40` - the number scanner
     // stops at the `e`, correctly, because G-code has no exponent notation.
@@ -610,6 +610,27 @@ describe('refusals', () => {
     expect(() => parse(['G90', 'M83', 'G1 X0 Y0 Z0.2', `G1 X${huge} E1`].join('\n'))).toThrow(
       /coordinate too large/,
     );
+  });
+
+  it('refuses opposing coordinates that are each individually representable', () => {
+    // The reason the bound is physical and not Float32's. -3e38 and +3e38 both survive
+    // `Math.fround` on their own, so a per-component float check passes them - but the
+    // extent between them is 6e38, and framing that produces a camera distance which
+    // overflows regardless. Bounding each end is what bounds the extent.
+    const e38 = `3${'0'.repeat(38)}`;
+    expect(() =>
+      parse(['G90', 'M83', 'G1 X0 Y0 Z0.2', `G1 X-${e38} E1`, `G1 X${e38} E1`].join('\n')),
+    ).toThrow(/coordinate too large/);
+  });
+
+  it('accepts a belt printer running metres down the bed', () => {
+    // The other side of that bound: it has to clear the longest thing anyone really
+    // prints. A belt printer's Y runs the length of the belt, and the coupled Z runs
+    // as far negative. Ten metres is the limit; two is a real print.
+    const parsed = parse(
+      ['G90', 'M83', 'G1 X0 Y0 Z0.2', 'G1 X10 E1', 'G1 Y2000 Z-1999 E5'].join('\n'),
+    );
+    expect(parsed.bounds?.max[1]).toBe(2000);
   });
 
   it('refuses a file with no newline in a megabyte', () => {

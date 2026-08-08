@@ -78,7 +78,12 @@
       .catch(() => {
         if (cancelled) return;
         viewerBroken = true;
+        // Both, because which one holds the parse depends on where the import landed:
+        // `pending` if it finished first, `toolpath` if the parse did. Either way it is
+        // up to 204 MB with nothing left that can draw it. No `clear` to go with them -
+        // the import is what failed, so there is no viewer holding anything.
         pending = undefined;
+        toolpath = undefined;
         // Nothing will draw the result, so stop paying for it. Without this a failed
         // renderer still streamed and parsed the whole file behind the error message.
         inFlight?.abort();

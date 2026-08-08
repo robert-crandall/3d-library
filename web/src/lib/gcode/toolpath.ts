@@ -188,9 +188,20 @@ function tooManySegments(cap: number): string {
   return `This file has more than ${cap.toLocaleString()} moves, which is more than this viewer can draw.`;
 }
 
-/** Whether every component survives the Float32Array the geometry is built from. */
-function finiteAsFloat32(v: readonly number[]): boolean {
-  return v.every((n) => Number.isFinite(Math.fround(n)));
+/**
+ * Whether every component is a coordinate a printer could reach.
+ *
+ * The bound is physical rather than Float32's, because Float32's is not enough on its
+ * own: -3e38 and +3e38 both survive `Math.fround`, but the extent between them is 6e38,
+ * and framing that computes a camera distance which overflows anyway. Bounding each end
+ * bounds the extent too. Ten metres is far past the longest belt printer, and a coordinate
+ * past it is a corrupt file rather than a print - held separately from the identical bound
+ * on declared beds in `printer.ts`, which is a different fact that happens to agree.
+ */
+const MAX_COORDINATE_MM = 10_000;
+
+function reachable(v: readonly number[]): boolean {
+  return v.every((n) => Number.isFinite(n) && Math.abs(n) <= MAX_COORDINATE_MM);
 }
 
 function tooManyLayers(cap: number): string {
@@ -347,12 +358,12 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
     // The travel pair is only meaningful when something moved without extruding; a file
     // with no travel at all leaves it at its infinite sentinel, which is not an overflow.
     const travelOverflows =
-      travelSegments > 0 && (!finiteAsFloat32(travelMin) || !finiteAsFloat32(travelMax));
-    if (!finiteAsFloat32(min) || !finiteAsFloat32(max) || travelOverflows) {
-      // A coordinate large enough to overflow a float32 - not something a slicer emits,
-      // but a corrupt or truncated file can. It reaches the GPU as Infinity, which makes
-      // the camera fit NaN and the panel silently blank, so refuse it here where there is
-      // still something to say.
+      travelSegments > 0 && (!reachable(travelMin) || !reachable(travelMax));
+    if (!reachable(min) || !reachable(max) || travelOverflows) {
+      // A coordinate no printer could reach - not something a slicer emits, but a corrupt
+      // or truncated file can. It reaches the GPU as a number that overflows the Float32
+      // the geometry is built from, which makes the camera fit NaN and the panel silently
+      // blank, so refuse it here where there is still something to say.
       throw new Error(COORDINATE_TOO_LARGE);
     }
     return {
