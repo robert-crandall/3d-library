@@ -142,7 +142,7 @@ export interface paths {
         put?: never;
         /**
          * Upload a model
-         * @description Uploads one or more files as a single named model. The body is multipart/form-data with any number of parts named "files".
+         * @description Creates a named model from a single uploaded file. Send the remaining files of a multi-file model to POST /api/models/{id}/files, one request each. The model is created by its first file so that a failed upload leaves no empty entry in the library.
          */
         post: operations["create-model"];
         delete?: never;
@@ -165,6 +165,26 @@ export interface paths {
         get: operations["get-model"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/models/{id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a file to a model
+         * @description Uploads one more file into an existing model. One request carries one file.
+         */
+        post: operations["add-model-file"];
         delete?: never;
         options?: never;
         head?: never;
@@ -402,6 +422,12 @@ export interface components {
             type: string;
         };
         File: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/File.json
+             */
+            readonly $schema?: string;
             contentType: string;
             /** Format: date-time */
             createdAt: string;
@@ -913,7 +939,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description multipart/form-data with one or more parts named "files". Described as opaque binary so the server can stream it; clients send a FormData, not a string. */
+        /** @description multipart/form-data with exactly one part named "file". Described as opaque binary so the server can stream it; clients send a FormData, not a string. */
         requestBody: {
             content: {
                 "multipart/form-data": string;
@@ -998,6 +1024,78 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "add-model-file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        /** @description multipart/form-data with exactly one part named "file". */
+        requestBody: {
+            content: {
+                "multipart/form-data": string;
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["File"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

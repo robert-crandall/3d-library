@@ -109,10 +109,11 @@ func TestStorageKeyIsUnique(t *testing.T) {
 	}
 }
 
-// The batch cap has to exceed what a legal upload can be, or the guard meant to
-// stop an endless preamble would start rejecting valid uploads instead.
-func TestMaxBatchBytesExceedsALegalUpload(t *testing.T) {
-	if got := maxBatchBytes(MaxFileBytes, MaxFiles); got <= MaxFileBytes*MaxFiles {
-		t.Errorf("maxBatchBytes = %d, want more than %d", got, MaxFileBytes*MaxFiles)
+// The request cap has to exceed what a legal upload can be, or the guard meant
+// to stop an endless preamble would start rejecting valid uploads instead. One
+// request carries one file, so the bar is one file plus its framing.
+func TestMaxBodyBytesExceedsALegalUpload(t *testing.T) {
+	if got := maxBodyBytes(MaxFileBytes); got <= MaxFileBytes {
+		t.Errorf("maxBodyBytes = %d, want more than %d", got, MaxFileBytes)
 	}
 }

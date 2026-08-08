@@ -22,6 +22,7 @@ type CurrentUserFunc func(ctx context.Context) (int64, error)
 // Register mounts the library routes.
 func Register(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	registerCreate(api, svc, currentUser)
+	registerAddFile(api, svc, currentUser)
 	registerList(api, svc, currentUser)
 	registerGet(api, svc, currentUser)
 }
@@ -41,37 +42,45 @@ type uploadInput struct {
 // hands a handler ctx.Context(), not the huma.Context, so a handler cannot
 // reach the underlying *http.Request. Resolvers do get the huma.Context.
 func (in *uploadInput) Resolve(ctx huma.Context) []error {
+	parts, errs := multipartReader(ctx)
+	in.parts = parts
+	return errs
+}
+
+func multipartReader(ctx huma.Context) (*multipart.Reader, []error) {
 	r, _ := humachi.Unwrap(ctx)
 
 	_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil {
-		return []error{&huma.ErrorDetail{
+		return nil, []error{&huma.ErrorDetail{
 			Location: "header.Content-Type",
 			Message:  "expected multipart/form-data",
 		}}
 	}
 	boundary, ok := params["boundary"]
 	if !ok {
-		return []error{&huma.ErrorDetail{
+		return nil, []error{&huma.ErrorDetail{
 			Location: "header.Content-Type",
 			Message:  "multipart/form-data is missing its boundary parameter",
 		}}
 	}
-	in.parts = multipart.NewReader(r.Body, boundary)
-	return nil
+	return multipart.NewReader(r.Body, boundary), nil
 }
 
 func registerCreate(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	huma.Register(api, huma.Operation{
 		OperationID: "create-model",
 		Summary:     "Upload a model",
-		Description: "Uploads one or more files as a single named model. The " +
-			"body is multipart/form-data with any number of parts named \"files\".",
-		Method:   http.MethodPost,
-		Path:     "/api/models",
-		Tags:     []string{"library"},
-		Errors:   []int{http.StatusUnauthorized, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity},
-		Security: apisec.User(api),
+		Description: "Creates a named model from a single uploaded file. Send " +
+			"the remaining files of a multi-file model to " +
+			"POST /api/models/{id}/files, one request each. The model is " +
+			"created by its first file so that a failed upload leaves no " +
+			"empty entry in the library.",
+		Method:      http.MethodPost,
+		Path:        "/api/models",
+		Tags:        []string{"library"},
+		Errors:      []int{http.StatusUnauthorized, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity},
+		Security:    apisec.User(api),
 		Middlewares: huma.Middlewares{svc.guardUpload(api, currentUser)},
 
 		// The schema is deliberately opaque. huma buffers and unmarshals the
@@ -83,7 +92,7 @@ func registerCreate(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 		// no body at all.
 		RequestBody: &huma.RequestBody{
 			Required: true,
-			Description: "multipart/form-data with one or more parts named \"files\". " +
+			Description: "multipart/form-data with exactly one part named \"file\". " +
 				"Described as opaque binary so the server can stream it; clients " +
 				"send a FormData, not a string.",
 			Content: map[string]*huma.MediaType{
@@ -102,6 +111,64 @@ func registerCreate(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 			return nil, uploadError(err)
 		}
 		return &modelOutput{Status: http.StatusCreated, Body: model}, nil
+	})
+}
+
+// addFileInput is uploadInput's sibling for an existing model. The two cannot
+// share a struct because this one takes the model from the path and no name.
+type addFileInput struct {
+	ID int64 `path:"id"`
+
+	parts *multipart.Reader
+}
+
+func (in *addFileInput) Resolve(ctx huma.Context) []error {
+	parts, errs := multipartReader(ctx)
+	in.parts = parts
+	return errs
+}
+
+type fileOutput struct {
+	Status int
+	Body   File
+}
+
+func registerAddFile(api huma.API, svc *Service, currentUser CurrentUserFunc) {
+	huma.Register(api, huma.Operation{
+		OperationID: "add-model-file",
+		Summary:     "Add a file to a model",
+		Description: "Uploads one more file into an existing model. One request " +
+			"carries one file.",
+		Method:      http.MethodPost,
+		Path:        "/api/models/{id}/files",
+		Tags:        []string{"library"},
+		Errors:      []int{http.StatusUnauthorized, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity},
+		Security:    apisec.User(api),
+		Middlewares: huma.Middlewares{svc.guardUpload(api, currentUser)},
+
+		// Opaque for the same reason as create-model; see there.
+		RequestBody: &huma.RequestBody{
+			Required:    true,
+			Description: "multipart/form-data with exactly one part named \"file\".",
+			Content: map[string]*huma.MediaType{
+				"multipart/form-data": {
+					Schema: &huma.Schema{Type: "string", Format: "binary"},
+				},
+			},
+		},
+	}, func(ctx context.Context, in *addFileInput) (*fileOutput, error) {
+		userID, err := currentUser(ctx)
+		if err != nil {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		file, err := svc.AddFile(ctx, userID, in.ID, in.parts)
+		if errors.Is(err, ErrNotFound) {
+			return nil, huma.Error404NotFound("model not found")
+		}
+		if err != nil {
+			return nil, uploadError(err)
+		}
+		return &fileOutput{Status: http.StatusCreated, Body: file}, nil
 	})
 }
 
@@ -156,7 +223,7 @@ func (s *Service) guardUpload(api huma.API, currentUser CurrentUserFunc) func(hu
 		// preamble lines before the first part, so a client can stream forever
 		// without either engaging. Passing w lets net/http close the connection
 		// rather than trying to drain the rest.
-		r.Body = http.MaxBytesReader(w, r.Body, s.maxBatchBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, s.maxBodyBytes)
 
 		next(ctx)
 	}

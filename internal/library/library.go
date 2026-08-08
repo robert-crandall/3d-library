@@ -30,7 +30,8 @@ const (
 	// MaxFileBytes is the per-file cap. 500 MB, as the epic settled.
 	MaxFileBytes int64 = 500 << 20
 
-	// MaxFiles is the number of files one upload may carry.
+	// MaxFiles is the number of files one model may hold. The UI queues at most
+	// this many uploads; the server re-checks because the UI is not a guard.
 	MaxFiles = 20
 
 	// UploadTimeout replaces the server's own read and write deadlines for the
@@ -61,9 +62,12 @@ type Service struct {
 	// The caps are fields rather than constants so tests can shrink them and
 	// exercise the real rejection paths with a few KB instead of gigabytes.
 	// Production always gets the constants above via NewService.
-	maxFileBytes  int64
-	maxFiles      int
-	maxBatchBytes int64
+	maxFileBytes int64
+	maxFiles     int
+	// maxBodyBytes bounds a whole upload request. It is the per-file cap plus
+	// slop for the multipart framing, not a multiple of it: one request carries
+	// one file.
+	maxBodyBytes int64
 }
 
 // Options configures a Service. Every field except Dir is optional; a zero
@@ -75,7 +79,7 @@ type Options struct {
 	Dir string
 	// MaxFileBytes caps a single file. 0 means MaxFileBytes.
 	MaxFileBytes int64
-	// MaxFiles caps how many files one upload may carry. 0 means MaxFiles.
+	// MaxFiles caps how many files one model may hold. 0 means MaxFiles.
 	MaxFiles int
 }
 
@@ -112,21 +116,21 @@ func NewService(pool *pgxpool.Pool, opts Options) (*Service, error) {
 	os.Remove(probeName)
 
 	return &Service{
-		db:            pool,
-		dir:           dir,
-		maxFileBytes:  perFile,
-		maxFiles:      count,
-		maxBatchBytes: maxBatchBytes(perFile, count),
+		db:           pool,
+		dir:          dir,
+		maxFileBytes: perFile,
+		maxFiles:     count,
+		maxBodyBytes: maxBodyBytes(perFile),
 	}, nil
 }
 
-// maxBatchBytes bounds the whole request body. The per-file cap and the file
-// count together bound a *well-formed* request, but mime/multipart skips
-// arbitrarily many preamble lines before it yields the first part, so without
-// this a client could stream forever without either of those checks engaging.
-// The slop covers boundaries and part headers.
-func maxBatchBytes(perFile int64, files int) int64 {
-	return perFile*int64(files) + 1<<20
+// maxBodyBytes bounds a whole upload request. The per-file cap bounds a
+// *well-formed* request, but mime/multipart skips arbitrarily many preamble
+// lines before it yields the first part, so without this a client could stream
+// forever without that check ever engaging. The slop covers the boundaries and
+// part headers around one file.
+func maxBodyBytes(perFile int64) int64 {
+	return perFile + 1<<20
 }
 
 // Dir reports where blobs are written. Tests read it to check what landed.
@@ -164,48 +168,173 @@ type staged struct {
 	size    int64
 }
 
-// Create streams every part of an upload to disk, then records the model and
-// its files in one short transaction.
+// Create stores one file and the model that owns it, in that order.
 //
-// The ordering is: stage all parts under tmpPrefix, rename them all into place,
-// then insert. Renaming before inserting means a row never points at a missing
-// or partial blob, which is the direction that matters - the reverse leaves the
-// library showing an entry whose file is not there. The transaction is opened
-// only once every byte is on disk, so a slow upload never holds a connection.
+// A model is never created without a file. One request carries one file (the
+// epic settled that: twenty 500 MB files in a single body would be a 10 GB
+// request), so a client uploading several calls this once and then AddFile for
+// each of the rest. Making the *first* file create the model is what keeps a
+// failed first upload from leaving an empty model in the grid - there is no
+// delete in this milestone to clean one up with.
+//
+// The ordering within the request is: stream the part to dir/.tmp-<key>, rename
+// it into place, then insert. Renaming before inserting means a row never
+// points at a missing or partial blob, which is the direction that matters -
+// the reverse leaves the library showing an entry whose file is not there. The
+// transaction is opened only once every byte is on disk, so a slow upload never
+// holds a connection.
 func (s *Service) Create(ctx context.Context, userID int64, name string, parts *multipart.Reader) (Model, error) {
-	files, err := s.stage(parts)
+	file, err := s.stageOnly(parts)
 	if err != nil {
-		removeAll(files)
+		removeOne(file)
 		return Model{}, err
 	}
-	if len(files) == 0 {
-		return Model{}, fmt.Errorf("%w: an upload needs at least one file", errInvalid)
-	}
-
-	for i := range files {
-		final := filepath.Join(s.dir, files[i].key)
-		if err := os.Rename(files[i].tmpPath, final); err != nil {
-			removeAll(files)
-			return Model{}, fmt.Errorf("library: rename: %w", err)
-		}
-		files[i].tmpPath = final
-	}
-
-	model, err := s.insert(ctx, userID, name, files)
-	if err != nil {
+	if err := s.publish(&file); err != nil {
+		removeOne(file)
 		return Model{}, err
 	}
-	return model, nil
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		// The commit was never attempted, so the blob is unreferenced and
+		// removing it is safe.
+		removeOne(file)
+		return Model{}, fmt.Errorf("library: begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var m Model
+	m.Name = name
+	err = tx.QueryRow(ctx,
+		`INSERT INTO models (user_id, name) VALUES ($1, $2) RETURNING id, created_at`,
+		userID, name,
+	).Scan(&m.ID, &m.CreatedAt)
+	if err != nil {
+		removeOne(file)
+		return Model{}, fmt.Errorf("library: insert model: %w", err)
+	}
+
+	out, err := insertFile(ctx, tx, m.ID, file)
+	if err != nil {
+		removeOne(file)
+		return Model{}, err
+	}
+
+	// Past this point the file is never removed. A commit can succeed on the
+	// server and still return a network error, and deleting the blob of a row
+	// that does exist would manufacture exactly the dangling entry this whole
+	// ordering prevents. An unreferenced blob is the better end of that trade -
+	// it costs disk, not correctness.
+	if err := tx.Commit(ctx); err != nil {
+		return Model{}, fmt.Errorf("library: commit: %w", err)
+	}
+
+	m.Files = []File{out}
+	m.FileCount = 1
+	m.TotalSize = out.Size
+	return m, nil
 }
 
-// stage writes each part to its own temp file. Every error path leaves the
-// caller responsible for removing whatever was staged, which is why it returns
-// the slice even when it fails.
-func (s *Service) stage(parts *multipart.Reader) ([]staged, error) {
-	var out []staged
+// AddFile appends one more file to a model the caller already owns.
+func (s *Service) AddFile(ctx context.Context, userID, modelID int64, parts *multipart.Reader) (File, error) {
+	// Check ownership before reading the body, so somebody else's model does
+	// not get to consume disk on the way to a 404.
+	var count int
+	err := s.db.QueryRow(ctx,
+		`SELECT count(f.id) FROM models m
+		   LEFT JOIN model_files f ON f.model_id = m.id
+		  WHERE m.id = $1 AND m.user_id = $2
+		  GROUP BY m.id`, modelID, userID).Scan(&count)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return File{}, ErrNotFound
+	}
+	if err != nil {
+		return File{}, fmt.Errorf("library: check model: %w", err)
+	}
+	if count >= s.maxFiles {
+		return File{}, fmt.Errorf("%w: a model may hold at most %d files", errInvalid, s.maxFiles)
+	}
+
+	file, err := s.stageOnly(parts)
+	if err != nil {
+		removeOne(file)
+		return File{}, err
+	}
+	if err := s.publish(&file); err != nil {
+		removeOne(file)
+		return File{}, err
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		removeOne(file)
+		return File{}, fmt.Errorf("library: begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Re-check ownership inside the transaction. The count above is advisory -
+	// it ran on another connection - and this is the one that actually stops a
+	// file being attached to somebody else's model.
+	var owned int64
+	err = tx.QueryRow(ctx,
+		`SELECT id FROM models WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+		modelID, userID).Scan(&owned)
+	if errors.Is(err, pgx.ErrNoRows) {
+		removeOne(file)
+		return File{}, ErrNotFound
+	}
+	if err != nil {
+		removeOne(file)
+		return File{}, fmt.Errorf("library: check model: %w", err)
+	}
+
+	out, err := insertFile(ctx, tx, modelID, file)
+	if err != nil {
+		removeOne(file)
+		return File{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return File{}, fmt.Errorf("library: commit: %w", err)
+	}
+	return out, nil
+}
+
+func insertFile(ctx context.Context, tx pgx.Tx, modelID int64, f staged) (File, error) {
+	var out File
+	err := tx.QueryRow(ctx,
+		`INSERT INTO model_files (model_id, storage_key, filename, type, content_type, size_bytes)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
+		modelID, f.key, f.name, f.typ, f.ctype, f.size,
+	).Scan(&out.ID, &out.CreatedAt)
+	if err != nil {
+		return File{}, fmt.Errorf("library: insert file: %w", err)
+	}
+	out.Filename, out.Type, out.ContentType, out.Size = f.name, f.typ, f.ctype, f.size
+	return out, nil
+}
+
+// publish moves a staged blob to its final name, after which it is a real file
+// that a reader may assume is complete.
+func (s *Service) publish(f *staged) error {
+	final := filepath.Join(s.dir, f.key)
+	if err := os.Rename(f.tmpPath, final); err != nil {
+		return fmt.Errorf("library: rename: %w", err)
+	}
+	f.tmpPath = final
+	return nil
+}
+
+// stageOnly reads exactly one file part and refuses anything else. A second
+// part is rejected before its body is read, so a client cannot smuggle a batch
+// past the per-request size cap by splitting it across parts.
+func (s *Service) stageOnly(parts *multipart.Reader) (staged, error) {
+	var out staged
 	for {
 		part, err := parts.NextPart()
 		if errors.Is(err, io.EOF) {
+			if out.tmpPath == "" {
+				return out, fmt.Errorf("%w: an upload needs exactly one file", errInvalid)
+			}
 			return out, nil
 		}
 		if err != nil {
@@ -215,30 +344,32 @@ func (s *Service) stage(parts *multipart.Reader) ([]staged, error) {
 			return out, fmt.Errorf("%w: %w", errInvalid, err)
 		}
 
-		// Only file parts named "files" count. Checking the filename as well as
-		// the field name matters: a text field carries the same field name with
-		// no filename, and accepting it would store a bogus file.
-		if part.FormName() != "files" || part.FileName() == "" {
+		// Only a file part named "file" counts. Checking the filename as well
+		// as the field name matters: a text field carries the same field name
+		// with no filename, and accepting it would store a bogus empty file.
+		if part.FormName() != "file" || part.FileName() == "" {
 			part.Close()
-			return out, fmt.Errorf("%w: every part must be a file in the \"files\" field", errInvalid)
+			return out, fmt.Errorf("%w: expected one file part named %q", errInvalid, "file")
 		}
-		if len(out) >= s.maxFiles {
+		if out.tmpPath != "" {
 			part.Close()
-			return out, fmt.Errorf("%w: an upload may contain at most %d files", errInvalid, s.maxFiles)
+			return out, fmt.Errorf("%w: an upload carries exactly one file", errInvalid)
 		}
 
 		st, err := s.stageOne(part)
 		part.Close()
+		if st.tmpPath != "" {
+			out = st
+		}
 		if err != nil {
-			if st.tmpPath != "" {
-				out = append(out, st)
-			}
 			return out, err
 		}
-		out = append(out, st)
 	}
 }
 
+// stageOne streams one part into its own temp file under tmpPrefix. A partial
+// upload is only ever visible under that prefix, never as a real file, which is
+// what lets a reader treat every other name in the directory as complete.
 func (s *Service) stageOne(part *multipart.Part) (staged, error) {
 	name := displayName(part.FileName())
 	key, err := storageKey(name)
@@ -273,55 +404,6 @@ func (s *Service) stageOne(part *multipart.Part) (staged, error) {
 		st.ctype = "application/octet-stream"
 	}
 	return st, nil
-}
-
-func (s *Service) insert(ctx context.Context, userID int64, name string, files []staged) (Model, error) {
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		// The commit was never attempted, so the blobs are unreferenced and
-		// removing them is safe.
-		removeAll(files)
-		return Model{}, fmt.Errorf("library: begin: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	var model Model
-	model.Name = name
-	err = tx.QueryRow(ctx,
-		`INSERT INTO models (user_id, name) VALUES ($1, $2) RETURNING id, created_at`,
-		userID, name,
-	).Scan(&model.ID, &model.CreatedAt)
-	if err != nil {
-		removeAll(files)
-		return Model{}, fmt.Errorf("library: insert model: %w", err)
-	}
-
-	for _, f := range files {
-		var out File
-		err = tx.QueryRow(ctx,
-			`INSERT INTO model_files (model_id, storage_key, filename, type, content_type, size_bytes)
-			 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
-			model.ID, f.key, f.name, f.typ, f.ctype, f.size,
-		).Scan(&out.ID, &out.CreatedAt)
-		if err != nil {
-			removeAll(files)
-			return Model{}, fmt.Errorf("library: insert file: %w", err)
-		}
-		out.Filename, out.Type, out.ContentType, out.Size = f.name, f.typ, f.ctype, f.size
-		model.Files = append(model.Files, out)
-		model.TotalSize += f.size
-	}
-	model.FileCount = len(model.Files)
-
-	// Past this point no file is ever removed. A commit can succeed on the
-	// server and still return a network error, and deleting the blobs of a row
-	// that does exist would manufacture exactly the dangling entry this whole
-	// ordering exists to prevent. An unreferenced blob is the better end of
-	// that trade - it costs disk, not correctness.
-	if err := tx.Commit(ctx); err != nil {
-		return Model{}, fmt.Errorf("library: commit: %w", err)
-	}
-	return model, nil
 }
 
 // List returns the user's root models, newest first. Versions - models with a
@@ -396,11 +478,11 @@ func (s *Service) Get(ctx context.Context, userID, id int64) (Model, error) {
 	return m, nil
 }
 
-func removeAll(files []staged) {
-	for _, f := range files {
-		if f.tmpPath != "" {
-			os.Remove(f.tmpPath)
-		}
+// removeOne deletes a blob that is not referenced by any committed row. It is
+// only ever called before COMMIT is attempted; see Create.
+func removeOne(f staged) {
+	if f.tmpPath != "" {
+		os.Remove(f.tmpPath)
 	}
 }
 

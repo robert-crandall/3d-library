@@ -271,6 +271,15 @@
       "File": {
         "additionalProperties": false,
         "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/File.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
           "contentType": {
             "type": "string"
           },
@@ -1080,7 +1089,7 @@
         ]
       },
       "post": {
-        "description": "Uploads one or more files as a single named model. The body is multipart/form-data with any number of parts named \"files\".",
+        "description": "Creates a named model from a single uploaded file. Send the remaining files of a multi-file model to POST /api/models/{id}/files, one request each. The model is created by its first file so that a failed upload leaves no empty entry in the library.",
         "operationId": "create-model",
         "parameters": [
           {
@@ -1106,7 +1115,7 @@
               }
             }
           },
-          "description": "multipart/form-data with one or more parts named \"files\". Described as opaque binary so the server can stream it; clients send a FormData, not a string.",
+          "description": "multipart/form-data with exactly one part named \"file\". Described as opaque binary so the server can stream it; clients send a FormData, not a string.",
           "required": true
         },
         "responses": {
@@ -1251,6 +1260,110 @@
           }
         ],
         "summary": "Get a model",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/models/{id}/files": {
+      "post": {
+        "description": "Uploads one more file into an existing model. One request carries one file.",
+        "operationId": "add-model-file",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "contentMediaType": "application/octet-stream",
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "description": "multipart/form-data with exactly one part named \"file\".",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/File"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Add a file to a model",
         "tags": [
           "library"
         ]

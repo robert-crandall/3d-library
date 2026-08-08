@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -66,31 +67,73 @@ func signIn(t *testing.T, ts *httptest.Server, email string) *client {
 	return c
 }
 
-// upload posts a multipart body built from name -> contents.
+// upload drives the whole client-side flow for a multi-file model: the first
+// file creates the model, each remaining file is its own request. Filenames are
+// sorted so the file that creates the model is deterministic.
+//
+// On success it returns the last upload's response (201) paired with the
+// assembled model, re-read so the caller sees every file rather than just the
+// one the create call returned. On failure it returns the first failing
+// response, which is what the UI would surface.
 func (c *client) upload(modelName string, files map[string]string) (*http.Response, string) {
 	c.t.Helper()
 
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	ct, part := filePart(c.t, names[0], files[names[0]])
+	resp, body := c.post(modelName, ct, part)
+	if resp.StatusCode != http.StatusCreated {
+		return resp, body
+	}
+	model := decodeModel(c.t, body)
+
+	for _, name := range names[1:] {
+		ct, part = filePart(c.t, name, files[name])
+		resp, body = c.addFile(model.ID, ct, part)
+		if resp.StatusCode != http.StatusCreated {
+			return resp, body
+		}
+	}
+
+	_, assembled := c.get(fmt.Sprintf("/api/models/%d", model.ID))
+	return resp, assembled
+}
+
+// filePart builds a one-file multipart body.
+func filePart(t *testing.T, filename, contents string) (string, io.Reader) {
+	t.Helper()
 	var buf strings.Builder
 	mw := multipart.NewWriter(&buf)
-	for filename, contents := range files {
-		w, err := mw.CreateFormFile("files", filename)
-		if err != nil {
-			c.t.Fatalf("create part: %v", err)
-		}
-		if _, err := io.WriteString(w, contents); err != nil {
-			c.t.Fatalf("write part: %v", err)
-		}
+	w, err := mw.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatalf("create part: %v", err)
+	}
+	if _, err := io.WriteString(w, contents); err != nil {
+		t.Fatalf("write part: %v", err)
 	}
 	if err := mw.Close(); err != nil {
-		c.t.Fatalf("close writer: %v", err)
+		t.Fatalf("close writer: %v", err)
 	}
-	return c.post(modelName, mw.FormDataContentType(), strings.NewReader(buf.String()))
+	return mw.FormDataContentType(), strings.NewReader(buf.String())
 }
 
 func (c *client) post(modelName, contentType string, body io.Reader) (*http.Response, string) {
 	c.t.Helper()
-	req, err := http.NewRequest(http.MethodPost,
-		c.ts.URL+"/api/models?"+url.Values{"name": {modelName}}.Encode(), body)
+	return c.do(c.ts.URL+"/api/models?"+url.Values{"name": {modelName}}.Encode(), contentType, body)
+}
+
+func (c *client) addFile(modelID int64, contentType string, body io.Reader) (*http.Response, string) {
+	c.t.Helper()
+	return c.do(fmt.Sprintf("%s/api/models/%d/files", c.ts.URL, modelID), contentType, body)
+}
+
+func (c *client) do(url, contentType string, body io.Reader) (*http.Response, string) {
+	c.t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, body)
 	if err != nil {
 		c.t.Fatalf("request: %v", err)
 	}
@@ -344,9 +387,9 @@ func TestFileExactlyAtTheCapIsAccepted(t *testing.T) {
 	}
 }
 
-// Rejecting the 21st file must happen before its body is read, and every file
-// staged before it must be removed. The second half is what a naive
-// implementation gets wrong: it refuses correctly and leaves 20 blobs behind.
+// The 21st file is refused before its body is read, and refusing it leaves no
+// new blob. The files already in the model stay, because they are committed
+// rows - the cap bounds a model, not a request.
 func TestTooManyFilesIsRejectedAndCleanedUp(t *testing.T) {
 	dbURL := testDatabase(t)
 	pool := testPool(t, dbURL)
@@ -355,18 +398,38 @@ func TestTooManyFilesIsRejectedAndCleanedUp(t *testing.T) {
 	c := signIn(t, ts, "many@example.com")
 
 	files := map[string]string{}
-	for i := range 4 {
+	for i := range 3 {
 		files[fmt.Sprintf("part%d.stl", i)] = "solid"
 	}
 	resp, body := c.upload("Too many", files)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("filling the model: got %d, want 201: %s", resp.StatusCode, body)
+	}
+	full := decodeModel(t, body)
+
+	before, _ := blobs(t, dir)
+	ct, part := filePart(t, "one-too-many.stl", "solid")
+	resp, body = c.addFile(full.ID, ct, part)
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("got %d, want 422: %s", resp.StatusCode, body)
 	}
 
 	final, temp := blobs(t, dir)
-	if len(final) != 0 || len(temp) != 0 {
-		t.Errorf("rejected upload left files behind: final=%v temp=%v", final, temp)
+	if len(final) != len(before) || len(temp) != 0 {
+		t.Errorf("the refused file left something behind: final=%v temp=%v", final, temp)
 	}
+	if m := decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", full.ID))); m.FileCount != 3 {
+		t.Errorf("fileCount = %d, want 3", m.FileCount)
+	}
+}
+
+func mustGet(t *testing.T, c *client, path string) string {
+	t.Helper()
+	resp, body := c.get(path)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get %s: got %d: %s", path, resp.StatusCode, body)
+	}
+	return body
 }
 
 // Exactly at the file-count cap is accepted, pinning the other side of the same
@@ -390,7 +453,7 @@ func TestExactlyMaxFilesIsAccepted(t *testing.T) {
 	}
 }
 
-// Parts that are not files in the "files" field are refused rather than stored.
+// Parts that are not files in the "file" field are refused rather than stored.
 // A text field carries the same field name with no filename, so checking only
 // the field name would store a bogus zero-byte "file" for every stray input a
 // future form grows.
@@ -410,10 +473,16 @@ func TestNonFilePartsAreRejected(t *testing.T) {
 			io.WriteString(w, "solid")
 		}},
 		{"text field, no filename", func(mw *multipart.Writer) {
-			w, _ := mw.CreateFormField("files")
+			w, _ := mw.CreateFormField("file")
 			io.WriteString(w, "solid")
 		}},
 		{"no parts at all", func(*multipart.Writer) {}},
+		{"two files in one request", func(mw *multipart.Writer) {
+			for _, name := range []string{"a.stl", "b.stl"} {
+				w, _ := mw.CreateFormFile("file", name)
+				io.WriteString(w, "solid")
+			}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf strings.Builder
@@ -437,46 +506,90 @@ func TestNonFilePartsAreRejected(t *testing.T) {
 	}
 }
 
-// A batch that fails partway must leave nothing: not the files that already
-// succeeded, not a model row with a subset of them. Milestone 1 has no edit or
-// delete, so a half-written model would be permanent.
-func TestPartialBatchFailureLeavesNothing(t *testing.T) {
+// A multi-file upload that fails partway keeps what already committed and
+// leaves no trace of what failed. Because one request carries one file, the
+// files that already succeeded are real committed rows and it would be wrong to
+// discard them; what must not happen is a blob for the file that was refused.
+//
+// The model itself is created by its *first* file, so a first-file failure
+// leaves no model at all - that case is asserted separately below.
+func TestPartialUploadKeepsWhatCommittedAndNothingElse(t *testing.T) {
 	dbURL := testDatabase(t)
 	pool := testPool(t, dbURL)
 	dir := t.TempDir()
 	ts := newTestServer(t, pool, library.Options{Dir: dir, MaxFileBytes: 1024})
 	c := signIn(t, ts, "partial@example.com")
 
-	// Ordered explicitly rather than through the map-based helper: the point is
-	// that a good file is staged *before* the bad one is seen.
-	var buf strings.Builder
-	mw := multipart.NewWriter(&buf)
-	for _, f := range []struct{ name, body string }{
-		{"good.stl", "solid"},
-		{"huge.stl", strings.Repeat("x", 4096)},
-		{"also-good.stl", "solid"},
-	} {
-		w, err := mw.CreateFormFile("files", f.name)
-		if err != nil {
-			t.Fatalf("create part: %v", err)
-		}
-		if _, err := io.WriteString(w, f.body); err != nil {
-			t.Fatalf("write part: %v", err)
-		}
+	ct, part := filePart(t, "good.stl", "solid")
+	resp, body := c.post("Half", ct, part)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first file: got %d, want 201: %s", resp.StatusCode, body)
 	}
-	if err := mw.Close(); err != nil {
-		t.Fatalf("close: %v", err)
+	m := decodeModel(t, body)
+
+	ct, part = filePart(t, "huge.stl", strings.Repeat("x", 4096))
+	resp, body = c.addFile(m.ID, ct, part)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("got %d, want 413: %s", resp.StatusCode, body)
 	}
 
-	resp, body := c.post("Half", mw.FormDataContentType(), strings.NewReader(buf.String()))
+	final, temp := blobs(t, dir)
+	if len(final) != 1 || len(temp) != 0 {
+		t.Errorf("want exactly the one committed blob: final=%v temp=%v", final, temp)
+	}
+	got := decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", m.ID)))
+	if got.FileCount != 1 || got.Files[0].Filename != "good.stl" {
+		t.Errorf("model = %+v, want just good.stl", got)
+	}
+}
+
+// A model is only ever created by a file that committed. If the very first file
+// fails there must be no model row, because milestone 1 has no delete and an
+// empty model would sit in the grid forever.
+func TestFailedFirstFileCreatesNoModel(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	dir := t.TempDir()
+	ts := newTestServer(t, pool, library.Options{Dir: dir, MaxFileBytes: 1024})
+	c := signIn(t, ts, "firstfail@example.com")
+
+	ct, part := filePart(t, "huge.stl", strings.Repeat("x", 4096))
+	resp, body := c.post("Never born", ct, part)
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("got %d, want 413: %s", resp.StatusCode, body)
 	}
 	if final, temp := blobs(t, dir); len(final) != 0 || len(temp) != 0 {
-		t.Errorf("partial batch left files behind: final=%v temp=%v", final, temp)
+		t.Errorf("left files behind: final=%v temp=%v", final, temp)
 	}
-	if resp, body := c.get("/api/models"); strings.TrimSpace(body) != "[]" {
-		t.Errorf("partial batch created a model: %q (status %d)", body, resp.StatusCode)
+	if strings.TrimSpace(mustGet(t, c, "/api/models")) != "[]" {
+		t.Error("a failed first file created a model")
+	}
+}
+
+// Adding a file to somebody else's model is a 404, and it must not cost the
+// attacker's target any disk.
+func TestAddFileToAnotherUsersModelIsNotFound(t *testing.T) {
+	dbURL := testDatabase(t)
+	pool := testPool(t, dbURL)
+	dir := t.TempDir()
+	ts := newTestServer(t, pool, library.Options{Dir: dir})
+
+	owner := signIn(t, ts, "owner2@example.com")
+	resp, body := owner.upload("Mine", map[string]string{"a.stl": "solid"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("owner upload: got %d: %s", resp.StatusCode, body)
+	}
+	mine := decodeModel(t, body)
+
+	before, _ := blobs(t, dir)
+	intruder := signIn(t, ts, "intruder2@example.com")
+	ct, part := filePart(t, "theirs.stl", "solid")
+	resp, body = intruder.addFile(mine.ID, ct, part)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("got %d, want 404: %s", resp.StatusCode, body)
+	}
+	if final, temp := blobs(t, dir); len(final) != len(before) || len(temp) != 0 {
+		t.Errorf("the refused upload left files behind: final=%v temp=%v", final, temp)
 	}
 }
 
