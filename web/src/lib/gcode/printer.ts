@@ -7,6 +7,8 @@
   neither of which a canvas would reveal.
 */
 
+import type { Bounds } from '$lib/viewer/framing';
+
 export type Volume = {
   /** Bed width, depth and maximum print height, in millimetres. */
   readonly x: number;
@@ -130,6 +132,40 @@ function plausible(bed: DeclaredBed): boolean {
     Math.abs(bed.minXMm) <= MAX_BED_MM &&
     Math.abs(bed.minYMm) <= MAX_BED_MM
   );
+}
+
+/**
+ * The build volume to draw around a print, or nothing when it would be misinformation.
+ *
+ * The grid is only meaningful if the print sits inside it. A belt printer's does not:
+ * it prints on a 45-degree belt where Y and Z are coupled, so the IdeaFormer fixture's
+ * toolpaths run to `Z -990` while the same file declares a 250 mm-tall volume starting
+ * at zero. Drawing that box puts a grid a metre away from the print - the camera frames
+ * the extrusions alone, so the print itself is fine and the grid is simply somewhere
+ * else, describing a coordinate frame this file is not using.
+ *
+ * Rejecting the box rather than transforming it into the belt's frame, because a grid is
+ * an orientation aid and no grid is a perfectly good state - it is what an unrecognised
+ * printer with no declared bed already gets. Drawing the belt's true frame is a feature,
+ * and one with no way to test it: the scene needs a GPU. The check is on containment
+ * rather than on a belt flag so that any other frame mismatch is caught too.
+ *
+ * A tolerance because a skirt or a brim legitimately prints outside the declared bed on
+ * plenty of profiles, and a print one millimetre over the edge is still worth a grid.
+ */
+const OUTSIDE_TOLERANCE_MM = 25;
+
+export function volumeFor(printer: Printer, bounds: Bounds | undefined): Volume | undefined {
+  if (!bounds) return printer.volume;
+  const { x, y, z, originX, originY } = printer.volume;
+  const within =
+    bounds.min[0] >= originX - OUTSIDE_TOLERANCE_MM &&
+    bounds.max[0] <= originX + x + OUTSIDE_TOLERANCE_MM &&
+    bounds.min[1] >= originY - OUTSIDE_TOLERANCE_MM &&
+    bounds.max[1] <= originY + y + OUTSIDE_TOLERANCE_MM &&
+    bounds.min[2] >= -OUTSIDE_TOLERANCE_MM &&
+    bounds.max[2] <= z + OUTSIDE_TOLERANCE_MM;
+  return within ? printer.volume : undefined;
 }
 
 /** `Bambu Lab X1 Carbon · 256³` - design 1c's lower readout line. */

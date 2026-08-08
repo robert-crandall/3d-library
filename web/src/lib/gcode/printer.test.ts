@@ -7,6 +7,7 @@ import {
   MIN_LIGHTNESS,
   resolvePrinter,
   toolpathColor,
+  volumeFor,
 } from './printer';
 
 describe('resolvePrinter', () => {
@@ -190,3 +191,40 @@ function lightnessOf(color: number): number {
   const b = (color & 255) / 255;
   return (Math.max(r, g, b) + Math.min(r, g, b)) / 2;
 }
+
+describe('volumeFor', () => {
+  const printer = resolvePrinter({ printerModel: 'Bambu Lab X1 Carbon' });
+
+  it('draws the grid around a print that sits on the bed', () => {
+    const volume = volumeFor(printer, { min: [60, 60, 0.2], max: [110, 110, 48] });
+    expect(volume).toEqual(printer.volume);
+  });
+
+  it('draws nothing when the print is nowhere near the declared volume', () => {
+    // The belt printer, in its own numbers: the IdeaFormer fixture prints on a
+    // 45-degree belt where Y and Z are coupled, so its toolpaths run to Y1010 and
+    // Z-990 while the file still declares an ordinary box starting at zero. The camera
+    // frames the extrusions, so the print draws correctly either way - the box is what
+    // ends up a metre away, describing a frame the file is not using.
+    const volume = volumeFor(printer, {
+      min: [112.811, 987.811, -990.254],
+      max: [137.189, 1010.289, -987.979],
+    });
+    expect(volume).toBeUndefined();
+  });
+
+  it('keeps the grid for a skirt printed just off the bed', () => {
+    // Plenty of profiles put the skirt or the purge line past the declared edge, and a
+    // print a few millimetres over is still worth an orientation aid. Only a mismatch
+    // big enough to be a different coordinate system should lose it.
+    const { x, y } = printer.volume;
+    const volume = volumeFor(printer, { min: [-8, -8, 0.2], max: [x + 8, y + 8, 48] });
+    expect(volume).toEqual(printer.volume);
+  });
+
+  it('draws the grid when there is nothing to check it against', () => {
+    // An empty parse has no bounds. Nothing has been contradicted, so the assumed
+    // volume still stands.
+    expect(volumeFor(printer, undefined)).toEqual(printer.volume);
+  });
+});

@@ -54,7 +54,11 @@ export type GcodeViewer = {
 export type ShowOptions = {
   /** `0xrrggbb`, already lifted into a legible band by `printer.ts`. */
   readonly color: number;
-  readonly volume: Volume;
+  /**
+   * The build volume grid, or nothing when the print does not sit inside it and a grid
+   * would describe a coordinate frame the file is not using - see `volumeFor`.
+   */
+  readonly volume: Volume | undefined;
 };
 
 /** Faint and neutral: the grid is a reference, not a thing to look at. */
@@ -130,7 +134,7 @@ export function createViewer(canvas: HTMLCanvasElement): GcodeViewer {
 
       disposeTree(grid);
       grid.clear();
-      grid.add(new LineSegments(buildVolumeGeometry(volume), gridMaterial));
+      if (volume) grid.add(new LineSegments(buildVolumeGeometry(volume), gridMaterial));
 
       this.setLayer(toolpath.layers.length - 1);
       viewport.render();

@@ -19,7 +19,7 @@
   import { formatDimensions } from '$lib/viewer/framing';
   import { MAX_GCODE_BYTES, loadToolpath } from '$lib/gcode/load';
   import { formatBytes } from '$lib/format';
-  import { formatPrinter, resolvePrinter, toolpathColor } from '$lib/gcode/printer';
+  import { formatPrinter, resolvePrinter, toolpathColor, volumeFor } from '$lib/gcode/printer';
   import type { Toolpath } from '$lib/gcode/toolpath';
   import type { GcodeViewer } from '$lib/gcode/scene';
   import type { ModelFile } from '$lib/upload';
@@ -106,7 +106,7 @@
   });
 
   function draw(next: Toolpath) {
-    viewer?.show(next, { color, volume: printer.volume });
+    viewer?.show(next, { color, volume: volumeFor(printer, next.bounds) });
     viewer?.setLayer(layer);
   }
 
