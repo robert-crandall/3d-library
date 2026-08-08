@@ -18,6 +18,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 IMAGE="${IMAGE:-3d-library:smoke}"
+# Also used as the helper container that reads the upload mount as root.
+PG_IMAGE="postgres:17-alpine"
 PORT="${PORT:-18080}"
 
 NET="ghtsmoke-net-$$"
@@ -94,15 +96,34 @@ wait_for_health() {
 # homelab this template is for.) Listing works either way because the directory
 # itself is 0777.
 #
-# Byte identity is proven by check 3 instead, and proven harder: it reads the
-# file back through a brand new container, which can only work if the bytes are
-# on the mount rather than in the old container's layer.
+# Byte identity is proven by check 3 instead, which hashes the blob from inside
+# a container, where root can read it.
 host_dir_has_a_blob() {
 	local f
 	for f in "$UPLOADS"/*; do
 		[ -e "$f" ] && return 0
 	done
 	return 1
+}
+
+# sha256 of a file on this machine. Linux ships sha256sum, macOS ships shasum.
+hash_on_host() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | cut -d' ' -f1
+	else
+		shasum -a 256 "$1" | cut -d' ' -f1
+	fi
+}
+
+# sha256 of the one blob under the upload mount, read as root inside a
+# container. See host_dir_has_a_blob for why this cannot be done on the host.
+hash_the_blob() {
+	docker run --rm -v "$UPLOADS:/data:ro" "$PG_IMAGE" sh -c '
+		set -e
+		f=$(find /data -type f ! -name ".tmp-*" | head -1)
+		[ -n "$f" ]
+		sha256sum "$f" | cut -d" " -f1
+	'
 }
 
 step "Building $IMAGE for the native architecture"
@@ -114,7 +135,7 @@ docker network create "$NET" >/dev/null
 docker run -d --name "$PG" --network "$NET" \
 	-e POSTGRES_USER=app -e POSTGRES_PASSWORD=app -e POSTGRES_DB=app \
 	--health-cmd='pg_isready -U app' --health-interval=1s --health-retries=30 \
-	postgres:17-alpine >/dev/null
+	"$PG_IMAGE" >/dev/null
 wait_for_health "$PG" healthy
 ok "postgres is up"
 
@@ -169,9 +190,10 @@ body="$(curl -sS -b "$jar" "$base/api/models/$model_id")"
 printf '%s' "$body" | grep -q '"filename"' ||
 	die "the new container does not know about model $model_id: $body"
 
-blob="$(find "$UPLOADS" -type f -not -name '.tmp-*' | head -1)"
-[ -n "$blob" ] || die "no blob under $UPLOADS after replacing the container"
-cmp -s "$photo" "$blob" || die "the stored bytes differ from what was uploaded"
+blob_hash="$(hash_the_blob)" ||
+	die "no readable blob under $UPLOADS after replacing the container"
+[ "$blob_hash" = "$(hash_on_host "$photo")" ] ||
+	die "the stored bytes differ from what was uploaded"
 ok "the model and its bytes both survived a brand new container"
 
 # --- 4 -----------------------------------------------------------------------
