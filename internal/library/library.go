@@ -163,6 +163,11 @@ type Model struct {
 	// ThumbnailFileID is the file whose thumbnail the tile should show, or nil
 	// for the placeholder. Resolved the same way as on the detail response.
 	ThumbnailFileID *int64 `json:"thumbnailFileId,omitempty"`
+
+	// Category is the model's category, or nil when it has none. The grid tile
+	// shows it as a coloured dot beside the name, so it belongs on the grid
+	// response and not only on the detail one.
+	Category *Category `json:"category,omitempty"`
 }
 
 // ModelDetail is one model with the editable metadata and the files it owns.
@@ -200,6 +205,14 @@ type ModelDetail struct {
 	// automatic". Without it a pinned file and an automatically chosen file are
 	// indistinguishable in the response and the button has nothing to key on.
 	ThumbnailAutomatic bool `json:"thumbnailAutomatic"`
+
+	// Category is nil when the model is uncategorized, which the detail page
+	// renders as "Uncategorized" rather than as blank.
+	Category *Category `json:"category,omitempty"`
+
+	// Tags and Materials are always non-nil, for the same reason Files is.
+	Tags      []Label `json:"tags" nullable:"false"`
+	Materials []Label `json:"materials" nullable:"false"`
 }
 
 // File is one uploaded file belonging to a model.
@@ -316,6 +329,11 @@ func (s *Service) Create(ctx context.Context, userID int64, name string, parts *
 	m.Files = []File{out}
 	m.FileCount = 1
 	m.TotalSize = out.Size
+	// A new model has neither, and both are non-nil in the contract, so they
+	// are set here rather than left as the zero value - `nullable:"false"`
+	// describes the schema, not what Go encodes a nil slice as.
+	m.Tags = []Label{}
+	m.Materials = []Label{}
 	// Nothing can be pinned yet - the model was created a few lines ago - so
 	// this is the automatic rule over exactly one file.
 	resolveThumbnail(&m, nil)
@@ -609,15 +627,35 @@ func (s *Service) stageOne(part *multipart.Part) (staged, error) {
 // List returns the user's root models, newest first. Versions - models with a
 // parent - are excluded here rather than filtered by the caller, because every
 // listing in this app is over roots.
-func (s *Service) List(ctx context.Context, userID int64) ([]Model, error) {
+//
+// The filter's clauses are appended to one statement rather than composed from
+// separate queries, so milestone 8 adds LIMIT/OFFSET and a search predicate to
+// the same place. Tag membership is an EXISTS rather than a join, which keeps
+// the aggregate below counting files and not file-tag pairs.
+func (s *Service) List(ctx context.Context, userID int64, f Filter) ([]Model, error) {
+	args := []any{userID}
+	where := "m.user_id = $1 AND m.parent_id IS NULL"
+	if f.CategoryID != nil {
+		args = append(args, *f.CategoryID)
+		where += fmt.Sprintf(" AND m.category_id = $%d", len(args))
+	}
+	if f.Uncategorized {
+		where += " AND m.category_id IS NULL"
+	}
+	if f.TagID != nil {
+		args = append(args, *f.TagID)
+		where += fmt.Sprintf(
+			" AND EXISTS (SELECT 1 FROM model_tags mt WHERE mt.model_id = m.id AND mt.tag_id = $%d)", len(args))
+	}
+
 	rows, err := s.db.Query(ctx,
 		`SELECT m.id, m.name, m.created_at,
-		        count(f.id), coalesce(sum(f.size_bytes), 0), m.thumbnail_file_id
+		        count(f.id), coalesce(sum(f.size_bytes), 0), m.thumbnail_file_id, m.category_id
 		   FROM models m
 		   LEFT JOIN model_files f ON f.model_id = m.id
-		  WHERE m.user_id = $1 AND m.parent_id IS NULL
+		  WHERE `+where+`
 		  GROUP BY m.id
-		  ORDER BY m.created_at DESC, m.id DESC`, userID)
+		  ORDER BY m.created_at DESC, m.id DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("library: list: %w", err)
 	}
@@ -627,19 +665,24 @@ func (s *Service) List(ctx context.Context, userID int64) ([]Model, error) {
 	// frontend would otherwise have to guard against.
 	models := []Model{}
 	pins := map[int64]*int64{}
+	categories := map[int64]*int64{}
 	for rows.Next() {
 		var m Model
-		var pinned *int64
-		if err := rows.Scan(&m.ID, &m.Name, &m.CreatedAt, &m.FileCount, &m.TotalSize, &pinned); err != nil {
+		var pinned, categoryID *int64
+		if err := rows.Scan(&m.ID, &m.Name, &m.CreatedAt, &m.FileCount, &m.TotalSize, &pinned, &categoryID); err != nil {
 			return nil, fmt.Errorf("library: list: %w", err)
 		}
 		pins[m.ID] = pinned
+		categories[m.ID] = categoryID
 		models = append(models, m)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("library: list: %w", err)
 	}
 	if err := s.resolveListThumbnails(ctx, models, pins); err != nil {
+		return nil, err
+	}
+	if err := s.resolveListCategories(ctx, userID, models, categories); err != nil {
 		return nil, err
 	}
 	return models, nil
@@ -703,12 +746,12 @@ func (s *Service) resolveListThumbnails(ctx context.Context, models []Model, pin
 // belongs to somebody else.
 func (s *Service) Get(ctx context.Context, userID, id int64) (ModelDetail, error) {
 	var m ModelDetail
-	var pinned *int64
+	var pinned, categoryID *int64
 	err := s.db.QueryRow(ctx,
-		`SELECT id, name, created_at, description, print_tips, source_url, thumbnail_file_id
+		`SELECT id, name, created_at, description, print_tips, source_url, thumbnail_file_id, category_id
 		   FROM models WHERE id = $1 AND user_id = $2`,
 		id, userID,
-	).Scan(&m.ID, &m.Name, &m.CreatedAt, &m.Description, &m.PrintTips, &m.SourceURL, &pinned)
+	).Scan(&m.ID, &m.Name, &m.CreatedAt, &m.Description, &m.PrintTips, &m.SourceURL, &pinned, &categoryID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ModelDetail{}, ErrNotFound
 	}
@@ -717,6 +760,12 @@ func (s *Service) Get(ctx context.Context, userID, id int64) (ModelDetail, error
 	}
 
 	if err := s.loadFiles(ctx, &m); err != nil {
+		return ModelDetail{}, err
+	}
+	if err := s.loadCategory(ctx, userID, &m, categoryID); err != nil {
+		return ModelDetail{}, err
+	}
+	if err := s.loadLabels(ctx, userID, &m); err != nil {
 		return ModelDetail{}, err
 	}
 	resolveThumbnail(&m, pinned)
@@ -768,17 +817,26 @@ func (s *Service) loadFiles(ctx context.Context, m *ModelDetail) error {
 // Edits carries the model metadata the detail screen may change. Every field is
 // replaced on every call: this is the whole editable surface, submitted as one
 // form, so there is no partial update for optional fields to express.
+//
+// CategoryID is nil for "uncategorized", and TagIDs and MaterialIDs are the
+// complete membership afterwards, not additions. That is what lets one request
+// express setting a category, adding a tag and removing a material at once.
 type Edits struct {
 	Name        string
 	Description string
 	PrintTips   string
 	SourceURL   string
+	CategoryID  *int64
+	TagIDs      []int64
+	MaterialIDs []int64
 }
 
 // Update replaces a model's editable metadata and returns the saved result.
 //
 // Validation runs before the UPDATE, so a rejected edit changes nothing - the
 // acceptance criterion is "does not change the record", not "shows no change".
+// The three writes share one transaction for the same reason: naming a tag that
+// is not yours must leave the name and description alone too, not half-apply.
 func (s *Service) Update(ctx context.Context, userID, id int64, e Edits) (ModelDetail, error) {
 	// Trim first, so a name of "   " is empty rather than a 3-character name.
 	e.Name = strings.TrimSpace(e.Name)
@@ -793,14 +851,19 @@ func (s *Service) Update(ctx context.Context, userID, id int64, e Edits) (ModelD
 		return ModelDetail{}, err
 	}
 
-	var m ModelDetail
-	var pinned *int64
-	err := s.db.QueryRow(ctx,
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return ModelDetail{}, fmt.Errorf("library: begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var updated int64
+	err = tx.QueryRow(ctx,
 		`UPDATE models SET name = $3, description = $4, print_tips = $5, source_url = $6
 		  WHERE id = $1 AND user_id = $2
-		RETURNING id, name, created_at, description, print_tips, source_url, thumbnail_file_id`,
+		RETURNING id`,
 		id, userID, e.Name, e.Description, e.PrintTips, e.SourceURL,
-	).Scan(&m.ID, &m.Name, &m.CreatedAt, &m.Description, &m.PrintTips, &m.SourceURL, &pinned)
+	).Scan(&updated)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ModelDetail{}, ErrNotFound
 	}
@@ -808,11 +871,24 @@ func (s *Service) Update(ctx context.Context, userID, id int64, e Edits) (ModelD
 		return ModelDetail{}, fmt.Errorf("library: update: %w", err)
 	}
 
-	if err := s.loadFiles(ctx, &m); err != nil {
+	if err := setCategory(ctx, tx, userID, id, e.CategoryID); err != nil {
 		return ModelDetail{}, err
 	}
-	resolveThumbnail(&m, pinned)
-	return m, nil
+	if err := replaceTags(ctx, tx, userID, id, e.TagIDs); err != nil {
+		return ModelDetail{}, err
+	}
+	if err := replaceMaterials(ctx, tx, userID, id, e.MaterialIDs); err != nil {
+		return ModelDetail{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return ModelDetail{}, fmt.Errorf("library: commit: %w", err)
+	}
+
+	// Read the saved row back rather than assembling it from the edits. The
+	// category and the labels are joins now, so building the response by hand
+	// would be a second copy of the loaders that could disagree with them.
+	return s.Get(ctx, userID, id)
 }
 
 // validSourceURL rejects anything that is not an ordinary web link.
@@ -1140,7 +1216,11 @@ func resolveThumbnail(m *ModelDetail, pinned *int64) {
 
 // errInvalid marks the errors that are the client's fault, so the API layer can
 // map them to 422 without matching on strings.
-var errInvalid = errors.New("library: invalid upload")
+//
+// The text is a prefix on every message built from it, and it is shown to the
+// user, so it says "request" rather than "upload": these are now also a bad
+// category colour and an unknown tag, neither of which is an upload.
+var errInvalid = errors.New("library: invalid request")
 
 // fileTypes maps a lowercase extension to the vocabulary the epic settled. The
 // mapping is total: anything unlisted is a document, which is why the database

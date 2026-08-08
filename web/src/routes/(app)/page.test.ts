@@ -1,9 +1,15 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import LibraryPage from './+page.svelte';
+import { nav } from '$lib/testing/nav.svelte';
 
 const get = vi.fn();
 vi.mock('$lib/api/client', () => ({ api: { GET: (...args: unknown[]) => get(...args) } }));
+
+// The filter is the URL's, so a test that wants a filtered library says so by
+// setting the URL rather than by poking at component state. `nav` is reactive,
+// so assigning to it mid-test is a navigation the page notices.
+vi.mock('$app/state', async () => ({ page: (await import('$lib/testing/nav.svelte')).nav }));
 
 const model = {
   id: 1,
@@ -17,7 +23,18 @@ const model = {
 // beforeEach that resets the mock makes vitest report the deliberately-rejected
 // promise below as an unhandled error instead of letting the component catch it.
 
+/** The page reads the model list and the shared taxonomy store reads four more
+ *  endpoints, all through the same mock. Counting only the model reads keeps
+ *  these assertions about the thing under test. */
+function modelReads() {
+  return get.mock.calls.filter((call) => String(call[0]).startsWith('/api/models')).length;
+}
+
 describe('library page', () => {
+  beforeEach(() => {
+    nav.url = new URL('http://localhost/');
+  });
+
   it('renders a tile per model with its name, file count and size', async () => {
     get.mockResolvedValue({ data: [model, { ...model, id: 2, name: 'Gridfinity', fileCount: 1 }] });
     render(LibraryPage);
@@ -116,10 +133,10 @@ describe('library page', () => {
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Upload' }));
 
     const reload = await within(dialog).findByRole('button', { name: 'Reload library' });
-    const before = get.mock.calls.length;
+    const before = modelReads();
     await fireEvent.click(reload);
 
-    await waitFor(() => expect(get.mock.calls.length).toBe(before + 1));
+    await waitFor(() => expect(modelReads()).toBe(before + 1));
     expect(screen.queryByRole('dialog', { name: 'Upload a model' })).toBeNull();
     vi.unstubAllGlobals();
   });
@@ -144,7 +161,14 @@ describe('library page', () => {
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Upload' }));
 
     let finishReload!: (value: unknown) => void;
-    get.mockImplementation(() => new Promise((resolve) => (finishReload = resolve)));
+    // Only the model read is held open. The taxonomy reads answer immediately,
+    // because what this test is about is the grid not being uploadable while
+    // its own contents are unknown.
+    get.mockImplementation((path: string) =>
+      String(path).startsWith('/api/models')
+        ? new Promise((resolve) => (finishReload = resolve))
+        : Promise.resolve({ data: [] })
+    );
     await fireEvent.click(await within(dialog).findByRole('button', { name: 'Reload library' }));
 
     expect((screen.getByRole('button', { name: 'Upload' }) as HTMLButtonElement).disabled).toBe(
@@ -171,9 +195,17 @@ describe('library page', () => {
   });
 
   // The seam that matters: a finished upload has to appear in the grid without
-  // a reload, and the dialog has to close.
-  it('adds an uploaded model to the grid', async () => {
-    get.mockResolvedValue({ data: [] });
+  // a reload, and the dialog has to close. The grid re-reads rather than
+  // prepending the response, because under a filter the new model - which has
+  // no category and no tags yet - may not belong in the list it was added from.
+  it('re-reads the library after an upload', async () => {
+    let uploaded = false;
+    get.mockImplementation((path: string) => {
+      if (!String(path).startsWith('/api/models')) return Promise.resolve({ data: [] });
+      return Promise.resolve({
+        data: uploaded ? [{ id: 9, name: 'Cable clip', fileCount: 1, totalSize: 2048 }] : []
+      });
+    });
     const fetch = vi.fn(async (url: string, init?: RequestInit) => {
       if (!init) {
         return {
@@ -181,6 +213,7 @@ describe('library page', () => {
           json: async () => ({ id: 9, name: 'Cable clip', fileCount: 1, totalSize: 2048 })
         } as Response;
       }
+      uploaded = true;
       return { ok: true, status: 201, json: async () => ({ id: 9, name: 'Cable clip' }) } as Response;
     });
     vi.stubGlobal('fetch', fetch);
@@ -198,5 +231,84 @@ describe('library page', () => {
     expect(screen.getByText('1 file · 2.0 KB')).toBeTruthy();
     expect(screen.queryByRole('dialog', { name: 'Upload a model' })).toBeNull();
     vi.unstubAllGlobals();
+  });
+});
+
+// Filtering is entirely the URL's: the sidebar links, and this page reads what
+// the link said. Anything else would need the two to agree by other means.
+describe('library page filtering', () => {
+  beforeEach(() => {
+    nav.url = new URL('http://localhost/');
+  });
+
+  it('asks the server for exactly the filter in the URL', async () => {
+    nav.url = new URL('http://localhost/?categoryId=3&tagId=8');
+    get.mockResolvedValue({ data: [] });
+    render(LibraryPage);
+
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/api/models?categoryId=3&tagId=8'));
+  });
+
+  // A filter that matches nothing is not an empty library, and the new-user
+  // empty state here would be a lie plus an Upload button that adds a model
+  // this filter would not show.
+  it('separates an empty filter from an empty library', async () => {
+    nav.url = new URL('http://localhost/?uncategorized=true');
+    get.mockResolvedValue({ data: [] });
+    render(LibraryPage);
+
+    expect(await screen.findByText('Nothing matches this filter')).toBeTruthy();
+    expect(screen.queryByText('Nothing here yet')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Show all models' }).getAttribute('href')).toBe('/');
+  });
+
+  // The heading has to name the filter. Without it a filtered grid and a small
+  // library look the same, and the user reads three tiles as their whole
+  // collection.
+  it('names the active filter and offers a way out of it', async () => {
+    nav.url = new URL('http://localhost/?uncategorized=true');
+    get.mockResolvedValue({ data: [model] });
+    render(LibraryPage);
+
+    expect(await screen.findByRole('heading', { name: 'Uncategorized' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Clear filter' }).getAttribute('href')).toBe('/');
+  });
+
+  // Two clicks in the sidebar are two GETs, and the second can answer first.
+  // Without a guard the grid ends up showing the first filter's models under the
+  // second filter's heading, which is the worst kind of wrong: it looks right.
+  it('keeps the newest filter when an older answer arrives late', async () => {
+    const pending: Record<string, (value: unknown) => void> = {};
+    get.mockImplementation((path: string) =>
+      String(path).startsWith('/api/models')
+        ? new Promise((resolve) => (pending[String(path)] = resolve))
+        : Promise.resolve({ data: [] })
+    );
+
+    nav.url = new URL('http://localhost/?categoryId=3');
+    render(LibraryPage);
+    await waitFor(() => expect(pending['/api/models?categoryId=3']).toBeTruthy());
+
+    nav.url = new URL('http://localhost/?categoryId=4');
+    await waitFor(() => expect(pending['/api/models?categoryId=4']).toBeTruthy());
+
+    pending['/api/models?categoryId=4']({ data: [{ ...model, id: 2, name: 'Toys model' }] });
+    expect(await screen.findByRole('heading', { name: 'Toys model' })).toBeTruthy();
+
+    pending['/api/models?categoryId=3']({ data: [{ ...model, name: 'Functional model' }] });
+    // One turn of the event loop is all the stale reply needs to overwrite the
+    // grid, so wait for it rather than asserting straight away.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByRole('heading', { name: 'Functional model' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Toys model' })).toBeTruthy();
+  });
+
+  it('offers no way out when nothing is filtered', async () => {
+    get.mockResolvedValue({ data: [model] });
+    render(LibraryPage);
+
+    expect(await screen.findByRole('heading', { name: 'All models' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Clear filter' })).toBeNull();
   });
 });

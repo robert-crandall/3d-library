@@ -32,6 +32,7 @@ func Register(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	registerDownload(api, svc, currentUser)
 	registerThumbnail(api, svc, currentUser)
 	registerSetThumbnail(api, svc, currentUser)
+	registerTaxonomy(api, svc, currentUser)
 }
 
 // uploadInput carries the streaming multipart reader from the resolver to the
@@ -255,22 +256,44 @@ type modelsOutput struct {
 	Body []Model `json:"body" nullable:"false"`
 }
 
+// listInput carries the sidebar's filters. All three are optional and ANDed;
+// none of them is the whole library.
+//
+// The ids are plain int64 with zero meaning "not filtering", because huma
+// refuses a pointer query parameter outright, and an id is generated always as
+// identity so zero is not one. Milestone 8's search, sort and pagination
+// parameters go here beside them, which is why the filter is a struct on the
+// service rather than three arguments.
+type listInput struct {
+	CategoryID    int64 `query:"categoryId" minimum:"1" doc:"Only models in this category"`
+	TagID         int64 `query:"tagId" minimum:"1" doc:"Only models carrying this tag"`
+	Uncategorized bool  `query:"uncategorized" doc:"Only models with no category"`
+}
+
 func registerList(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	huma.Register(api, huma.Operation{
 		OperationID: "list-models",
 		Summary:     "List models",
-		Description: "Every model in the caller's library, newest first.",
-		Method:      http.MethodGet,
-		Path:        "/api/models",
-		Tags:        []string{"library"},
-		Errors:      []int{http.StatusUnauthorized},
-		Security:    apisec.User(api),
-	}, func(ctx context.Context, _ *struct{}) (*modelsOutput, error) {
+		Description: "Every model in the caller's library, newest first. The " +
+			"optional filters narrow it and combine with AND.",
+		Method:   http.MethodGet,
+		Path:     "/api/models",
+		Tags:     []string{"library"},
+		Errors:   []int{http.StatusUnauthorized, http.StatusUnprocessableEntity},
+		Security: apisec.User(api),
+	}, func(ctx context.Context, in *listInput) (*modelsOutput, error) {
 		userID, err := currentUser(ctx)
 		if err != nil {
 			return nil, huma.Error401Unauthorized("authentication required")
 		}
-		models, err := svc.List(ctx, userID)
+		f := Filter{Uncategorized: in.Uncategorized}
+		if in.CategoryID != 0 {
+			f.CategoryID = &in.CategoryID
+		}
+		if in.TagID != 0 {
+			f.TagID = &in.TagID
+		}
+		models, err := svc.List(ctx, userID, f)
 		if err != nil {
 			return nil, internalError("could not read the library", err)
 		}
@@ -308,29 +331,39 @@ func registerGet(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	})
 }
 
-// updateInput is the whole editable metadata surface, every field required.
+// updateInput is the whole editable surface, every field required.
 //
 // This is PUT, not PATCH, because it is a full replacement: the detail screen
-// submits one form containing all four fields, so there is no partial update to
+// submits one form containing all of it, so there is no partial update to
 // express. Pointer fields and a "which keys arrived" branch would buy partial
 // semantics for a caller that does not exist.
+//
+// The three taxonomy fields are required for a sharper reason than the other
+// four. Because this is a replacement, a caller that sent only the metadata
+// would be asking for the model's tags to be emptied - so requiring them turns
+// "the client forgot" into a 422 instead of silent data loss. categoryId is
+// required and nullable: null is how a model is uncategorized.
 type updateInput struct {
 	ID   int64 `path:"id"`
 	Body struct {
-		Name        string `json:"name" required:"true" maxLength:"200" doc:"The model's display name"`
-		Description string `json:"description" required:"true" maxLength:"5000" doc:"Free text, may be empty"`
-		PrintTips   string `json:"printTips" required:"true" maxLength:"5000" doc:"One tip per line, may be empty"`
-		SourceURL   string `json:"sourceUrl" required:"true" maxLength:"2000" doc:"An http:// or https:// address, or empty"`
+		Name        string  `json:"name" required:"true" maxLength:"200" doc:"The model's display name"`
+		Description string  `json:"description" required:"true" maxLength:"5000" doc:"Free text, may be empty"`
+		PrintTips   string  `json:"printTips" required:"true" maxLength:"5000" doc:"One tip per line, may be empty"`
+		SourceURL   string  `json:"sourceUrl" required:"true" maxLength:"2000" doc:"An http:// or https:// address, or empty"`
+		CategoryID  *int64  `json:"categoryId" required:"true" doc:"The category this model belongs to, or null for uncategorized"`
+		TagIDs      []int64 `json:"tagIds" required:"true" nullable:"false" doc:"The model's tags afterwards, not additions"`
+		MaterialIDs []int64 `json:"materialIds" required:"true" nullable:"false" doc:"The model's materials afterwards, not additions"`
 	}
 }
 
 func registerUpdate(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	huma.Register(api, huma.Operation{
 		OperationID: "update-model",
-		Summary:     "Update a model's metadata",
-		Description: "Replaces the model's editable metadata. All four fields " +
-			"are sent every time; an empty string clears a field. The name may " +
-			"not be blank.",
+		Summary:     "Update a model",
+		Description: "Replaces the model's editable surface: its metadata, its " +
+			"category, its tags and its materials. Everything is sent every " +
+			"time; an empty string clears a field and an empty array clears a " +
+			"list. The name may not be blank.",
 		Method:   http.MethodPut,
 		Path:     "/api/models/{id}",
 		Tags:     []string{"library"},
@@ -346,6 +379,9 @@ func registerUpdate(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 			Description: in.Body.Description,
 			PrintTips:   in.Body.PrintTips,
 			SourceURL:   in.Body.SourceURL,
+			CategoryID:  in.Body.CategoryID,
+			TagIDs:      in.Body.TagIDs,
+			MaterialIDs: in.Body.MaterialIDs,
 		})
 		if errors.Is(err, ErrNotFound) {
 			return nil, huma.Error404NotFound("model not found")

@@ -31,3 +31,44 @@ describe('ModelTile', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 });
+
+// The design puts the category on the tile, which is the only place the grid
+// says what a model is filed under. Without it a filtered grid and an
+// unfiltered one look identical.
+describe('ModelTile category', () => {
+  it('shows the category name and its colour', () => {
+    render(ModelTile, {
+      model: {
+        id: 1,
+        name: 'Benchy',
+        fileCount: 1,
+        totalSize: 1024,
+        createdAt: '2026-01-01T00:00:00Z',
+        category: { id: 3, name: 'Functional', color: '#3b82f6' }
+      }
+    });
+
+    expect(screen.getByText('Functional')).toBeTruthy();
+    // The colour is data, not a class, so the only way to check it is the
+    // attribute it is written into. jsdom normalises the hex to rgb().
+    const dot = document.querySelector<HTMLElement>('[style*="background-color"]');
+    expect(dot?.style.backgroundColor).toBe('rgb(59, 130, 246)');
+  });
+
+  // Most models are uncategorized, and an "Uncategorized" word on every tile is
+  // noise that pushes the size off the row.
+  it('shows nothing at all when the model has no category', () => {
+    render(ModelTile, {
+      model: {
+        id: 1,
+        name: 'Benchy',
+        fileCount: 1,
+        totalSize: 1024,
+        createdAt: '2026-01-01T00:00:00Z'
+      }
+    });
+
+    expect(screen.queryByText('Uncategorized')).toBeNull();
+    expect(document.querySelector('[style*="background-color"]')).toBeNull();
+  });
+});

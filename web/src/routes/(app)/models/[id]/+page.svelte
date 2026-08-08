@@ -9,6 +9,9 @@
   import FilePreviewPanel from '$lib/components/FilePreviewPanel.svelte';
   import { hasPreview } from '$lib/preview';
   import Thumbnail from '$lib/components/Thumbnail.svelte';
+  import CategoryBadge from '$lib/components/CategoryBadge.svelte';
+  import LabelChips from '$lib/components/LabelChips.svelte';
+  import { library } from '$lib/library.svelte';
   import { formatBytes, formatDate, formatFileCount } from '$lib/format';
   import { sliceRows } from '$lib/slice';
   import type { ModelDetail, ModelFile } from '$lib/upload';
@@ -104,6 +107,9 @@
     description: string;
     printTips: string;
     sourceUrl: string;
+    categoryId: number | null;
+    tagIds: number[];
+    materialIds: number[];
   }) {
     busy = true;
     dialogError = '';
@@ -120,6 +126,11 @@
       // add except a chance for the two to disagree.
       model = body;
       editing = false;
+      // The sidebar's counts moved: this model just joined or left a category
+      // and some tags. Nothing else on the page can work that out, and a
+      // sidebar that still says 12 after the twelfth model left is worse than
+      // one extra GET.
+      library.refresh();
     } catch {
       dialogError = 'Could not reach the server.';
     } finally {
@@ -236,13 +247,20 @@
     <nav class="flex items-center gap-2 text-sm text-muted" aria-label="Breadcrumb">
       <a href="/">Library</a>
       <span aria-hidden="true">/</span>
-      <span class="text-ink">{model.name}</span>
+      {#if model.category}
+        <!-- A link back to the filtered grid, which is the trail the design's
+             breadcrumb implies: it is the place this model came from. -->
+        <a href="/?categoryId={model.category.id}">{model.category.name}</a>
+        <span aria-hidden="true">/</span>
+      {/if}
+      <span class="truncate text-ink">{model.name}</span>
     </nav>
 
     <header class="mt-3.5 flex items-start gap-4">
       <div class="min-w-0">
         <h1 class="text-2xl font-semibold">{model.name}</h1>
         <p class="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-muted">
+          <CategoryBadge category={model.category} />
           <span>{formatFileCount(model.fileCount)} · {formatBytes(model.totalSize)}</span>
           <span aria-hidden="true">·</span>
           <span>Added {formatDate(model.createdAt)}</span>
@@ -424,6 +442,25 @@
       </div>
 
       <div class="flex flex-col gap-5">
+        {#if model.tags.length > 0 || model.materials.length > 0}
+          <!-- One panel, not two: with two or three chips each, a heading per
+               list costs more vertical space than the chips do, and the design
+               draws them together under the model's own metadata. -->
+          <section class="rounded-tile border border-line bg-surface px-4 py-3">
+            {#if model.materials.length > 0}
+              <h2 class="text-sm font-semibold">Materials</h2>
+              <div class="mt-2"><LabelChips labels={model.materials} /></div>
+            {/if}
+            {#if model.tags.length > 0}
+              <h2 class="text-sm font-semibold" class:mt-3={model.materials.length > 0}>Tags</h2>
+              <!-- Linked, unlike the materials: the sidebar filters by tag, so
+                   a tag chip has somewhere to go and a material chip does not.
+                   Material filtering is a follow-up, not a gap here. -->
+              <div class="mt-2"><LabelChips labels={model.tags} href={(t) => `/?tagId=${t.id}`} /></div>
+            {/if}
+          </section>
+        {/if}
+
         {#if sliced?.extractedMeta}
           <SliceSettings meta={sliced.extractedMeta} filename={sliced.filename} />
         {/if}
