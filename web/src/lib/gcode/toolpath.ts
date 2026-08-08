@@ -767,8 +767,11 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
         return;
       }
       if (!anchored) {
-        anchor();
-        purgeSegments = extrusionSegments;
+        // The first marker of the file arriving over a run at a *different* Z: that run
+        // was a layer that had already printed, not a purge line, so it keeps its bounds
+        // and is not counted as purge. Only the anchoring is taken from it, so a later
+        // marker does not try to absorb a purge again.
+        anchored = true;
       }
       closeLayer();
       startLayer(z);

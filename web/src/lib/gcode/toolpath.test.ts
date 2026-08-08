@@ -78,6 +78,10 @@ describe('layer detection', () => {
   it('does not absorb a real preceding layer, which is at a different Z', () => {
     // The same shape as the purge case except that Z moved, which is the whole
     // difference between "this was a purge line" and "the first marker arrived late".
+    // So the run before the marker keeps its bounds and is not counted as purge: it is
+    // a layer that printed. Marking it purge left the camera framing the second layer
+    // alone and reported the print's X and Y from it, which is wrong for anything whose
+    // base is its widest part.
     const parsed = parse(
       [
         'G90',
@@ -91,7 +95,8 @@ describe('layer detection', () => {
       ].join('\n'),
     );
     expect(parsed.layers.map((l) => l.z)).toEqual([0.2, 0.4]);
-    expect(parsed.purgeSegments).toBe(1);
+    expect(parsed.purgeSegments).toBe(0);
+    expect(parsed.bounds).toEqual({ min: [0, 0, 0.2], max: [10, 10, 0.4] });
   });
 
   it('decides absorption at the extrusion, not at the marker', () => {
