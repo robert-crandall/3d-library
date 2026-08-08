@@ -117,10 +117,15 @@ hash_on_host() {
 
 # sha256 of the one blob under the upload mount, read as root inside a
 # container. See host_dir_has_a_blob for why this cannot be done on the host.
+#
+# The `*.thumb` exclusion matters as much as the `.tmp-*` one: an upload that
+# carries a thumbnail writes a sidecar beside the blob, `find` returns them in
+# no particular order, and hashing the PNG instead of the STL would fail this
+# check for a reason that has nothing to do with the volume mount it is testing.
 hash_the_blob() {
 	docker run --rm -v "$UPLOADS:/data:ro" "$PG_IMAGE" sh -c '
 		set -e
-		f=$(find /data -type f ! -name ".tmp-*" | head -1)
+		f=$(find /data -type f ! -name ".tmp-*" ! -name "*.thumb" | head -1)
 		[ -n "$f" ]
 		sha256sum "$f" | cut -d" " -f1
 	'

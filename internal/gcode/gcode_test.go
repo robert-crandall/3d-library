@@ -244,7 +244,7 @@ func TestParseReadsOnlyTwoWindows(t *testing.T) {
 	want, _ := Parse(strings.NewReader(string(raw)), int64(len(raw)))
 
 	const size = 600 << 20
-	head, tail := splitAtLine(raw, headBytes)
+	head, tail := splitAtLine(raw, HeadBytes)
 	big := &spliced{size: size, segs: []segment{
 		{off: 0, data: head},
 		{off: size - int64(len(tail)), data: tail},
@@ -265,14 +265,14 @@ func TestParseReadsOnlyTwoWindows(t *testing.T) {
 	for _, r := range big.reads {
 		total += r.n
 	}
-	if total != headBytes+tailBytes {
-		t.Errorf("read %d bytes, want %d", total, headBytes+tailBytes)
+	if total != HeadBytes+TailBytes {
+		t.Errorf("read %d bytes, want %d", total, HeadBytes+TailBytes)
 	}
 	if big.reads[0].off != 0 {
 		t.Errorf("first read at %d, want 0", big.reads[0].off)
 	}
-	if big.reads[1].off != size-tailBytes {
-		t.Errorf("second read at %d, want %d", big.reads[1].off, size-tailBytes)
+	if big.reads[1].off != size-TailBytes {
+		t.Errorf("second read at %d, want %d", big.reads[1].off, size-TailBytes)
 	}
 }
 

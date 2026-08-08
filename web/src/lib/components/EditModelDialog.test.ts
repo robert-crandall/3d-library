@@ -11,6 +11,9 @@ const model = {
   description: 'Holds four spools.',
   printTips: 'PETG at 245 C.',
   sourceUrl: 'https://www.printables.com/model/48213',
+  // No thumbnailFileId: the field is omitted when the model has no picture,
+  // which is what this fixture is.
+  thumbnailAutomatic: true,
   files: []
 };
 

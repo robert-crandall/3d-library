@@ -27,9 +27,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/robert-crandall/3d-library/internal/gcode"
+	"github.com/robert-crandall/3d-library/internal/thumb"
 )
 
 const (
@@ -50,6 +52,14 @@ const (
 	// only ever visible under this prefix, never as a real file, which is what
 	// lets a reader treat every other name in the directory as complete.
 	tmpPrefix = ".tmp-"
+
+	// thumbSuffix names a thumbnail beside the blob it belongs to. A suffix on
+	// the existing key rather than a parallel directory: it keeps a file and
+	// its thumbnail together for a backup or an rsync, and the storage key is
+	// already random and collision-free so the derived name is too. It does
+	// mean anything walking UPLOAD_DIR has to skip these, which the delete
+	// path, the tests and the docker smoke script all do.
+	thumbSuffix = ".thumb"
 )
 
 // ErrNotFound is returned when a model does not exist *or* belongs to another
@@ -149,6 +159,10 @@ type Model struct {
 	FileCount int       `json:"fileCount"`
 	TotalSize int64     `json:"totalSize"`
 	CreatedAt time.Time `json:"createdAt"`
+
+	// ThumbnailFileID is the file whose thumbnail the tile should show, or nil
+	// for the placeholder. Resolved the same way as on the detail response.
+	ThumbnailFileID *int64 `json:"thumbnailFileId,omitempty"`
 }
 
 // ModelDetail is one model with the editable metadata and the files it owns.
@@ -175,6 +189,17 @@ type ModelDetail struct {
 	PrintTips   string    `json:"printTips"`
 	SourceURL   string    `json:"sourceUrl"`
 	Files       []File    `json:"files" nullable:"false"`
+
+	// ThumbnailFileID is the file whose thumbnail represents this model, or nil
+	// if none of its files has one. It is resolved: the pin if the user set
+	// one, otherwise whatever the automatic rule picked.
+	ThumbnailFileID *int64 `json:"thumbnailFileId,omitempty"`
+
+	// ThumbnailAutomatic says the resolved choice came from the rule rather
+	// than the user, so the detail screen knows whether to offer "back to
+	// automatic". Without it a pinned file and an automatically chosen file are
+	// indistinguishable in the response and the button has nothing to key on.
+	ThumbnailAutomatic bool `json:"thumbnailAutomatic"`
 }
 
 // File is one uploaded file belonging to a model.
@@ -194,6 +219,12 @@ type File struct {
 	// path by which this and the bytes on disk can disagree, and no need for
 	// the API to accept a value for it.
 	ExtractedMeta *gcode.Meta `json:"extractedMeta,omitempty"`
+
+	// HasThumbnail says a PNG was extracted for this file and sits beside its
+	// blob. The client needs it to know which rows can be pinned and which
+	// rows can show a preview; the server needs it to pick the model's
+	// thumbnail without reading the filesystem.
+	HasThumbnail bool `json:"hasThumbnail"`
 }
 
 // staged is a file written to disk but not yet committed to the database.
@@ -212,6 +243,13 @@ type staged struct {
 	// jsonb rather than guessing at bytea.
 	meta     *gcode.Meta
 	metaJSON json.RawMessage
+
+	// thumb is the extracted PNG, held in memory until the blob has been
+	// renamed into place. It is not written during staging: stageOne works
+	// under .tmp-<key>, and a sidecar written there under its final name would
+	// survive an upload that fails afterwards, leaving a thumbnail beside no
+	// blob. publish writes it, in the same step that makes the blob real.
+	thumb []byte
 }
 
 // Create stores one file and the model that owns it, in that order.
@@ -278,6 +316,9 @@ func (s *Service) Create(ctx context.Context, userID int64, name string, parts *
 	m.Files = []File{out}
 	m.FileCount = 1
 	m.TotalSize = out.Size
+	// Nothing can be pinned yet - the model was created a few lines ago - so
+	// this is the automatic rule over exactly one file.
+	resolveThumbnail(&m, nil)
 	return m, nil
 }
 
@@ -361,30 +402,73 @@ func (s *Service) AddFile(ctx context.Context, userID, modelID int64, parts *mul
 
 func insertFile(ctx context.Context, tx pgx.Tx, modelID int64, f staged) (File, error) {
 	var out File
+	// hasThumbnail is derived from the staged bytes rather than passed in
+	// separately, so the row cannot claim a sidecar publish decided not to
+	// write: publish clears the field when the write fails.
+	hasThumb := len(f.thumb) > 0
 	// A nil metaJSON is a SQL NULL, which is what every non-G-code file and
 	// every unrecognised slicer stores.
 	err := tx.QueryRow(ctx,
-		`INSERT INTO model_files (model_id, storage_key, filename, type, content_type, size_bytes, extracted_meta)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
-		modelID, f.key, f.name, f.typ, f.ctype, f.size, f.metaJSON,
+		`INSERT INTO model_files (model_id, storage_key, filename, type, content_type, size_bytes, extracted_meta, has_thumbnail)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
+		modelID, f.key, f.name, f.typ, f.ctype, f.size, f.metaJSON, hasThumb,
 	).Scan(&out.ID, &out.CreatedAt)
 	if err != nil {
 		return File{}, fmt.Errorf("library: insert file: %w", err)
 	}
 	out.Filename, out.Type, out.ContentType, out.Size = f.name, f.typ, f.ctype, f.size
 	out.ExtractedMeta = f.meta
+	out.HasThumbnail = hasThumb
 	return out, nil
 }
 
 // publish moves a staged blob to its final name, after which it is a real file
-// that a reader may assume is complete.
+// that a reader may assume is complete, and writes its thumbnail sidecar.
+//
+// The sidecar goes here rather than in stageOne because stageOne is working on
+// a temp file: writing <key>.thumb before the rename would leave a thumbnail
+// behind for an upload that never completed. Writing it after the rename means
+// the worst case is the reverse, a blob whose thumbnail is missing, and that
+// one is recoverable - hasThumbnail is set from the sidecar below, so the row
+// simply says it has none.
 func (s *Service) publish(f *staged) error {
 	final := filepath.Join(s.dir, f.key)
 	if err := os.Rename(f.tmpPath, final); err != nil {
 		return fmt.Errorf("library: rename: %w", err)
 	}
 	f.tmpPath = final
+
+	if len(f.thumb) > 0 && !writeSidecar(final+thumbSuffix, f.thumb) {
+		// A thumbnail is a nicety and the bytes are still on disk to re-derive
+		// from. Dropping it keeps the promise that extraction can never fail an
+		// upload, and clearing the field is what makes the row agree with the
+		// filesystem.
+		f.thumb = nil
+	}
 	return nil
+}
+
+// writeSidecar writes a thumbnail beside its blob, removing a partial file if
+// anything goes wrong. A half-written PNG that stayed on disk would be served
+// to the browser as a broken image forever, which is worse than no thumbnail.
+func writeSidecar(path string, b []byte) bool {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		slog.Warn("library: create thumbnail", "error", err)
+		return false
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		os.Remove(path)
+		slog.Warn("library: write thumbnail", "error", err)
+		return false
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		slog.Warn("library: close thumbnail", "error", err)
+		return false
+	}
+	return true
 }
 
 // stageOnly reads exactly one file part and refuses anything else. A second
@@ -487,6 +571,17 @@ func (s *Service) stageOne(part *multipart.Part) (staged, error) {
 		}
 	}
 
+	// And the thumbnail, out of the same handle and under the same guards, for
+	// the same reasons. thumb.Extract cannot fail either - it reports "nothing
+	// found" rather than an error - so a file this app cannot make a picture of
+	// still uploads. The bytes are held on st rather than written here; see
+	// publish for why.
+	if err == nil && size <= s.maxFileBytes {
+		if png, ok := thumb.Extract(f, size, st.typ); ok {
+			st.thumb = png
+		}
+	}
+
 	closeErr := f.Close()
 	if err != nil {
 		return st, fmt.Errorf("library: write: %w", err)
@@ -517,7 +612,7 @@ func (s *Service) stageOne(part *multipart.Part) (staged, error) {
 func (s *Service) List(ctx context.Context, userID int64) ([]Model, error) {
 	rows, err := s.db.Query(ctx,
 		`SELECT m.id, m.name, m.created_at,
-		        count(f.id), coalesce(sum(f.size_bytes), 0)
+		        count(f.id), coalesce(sum(f.size_bytes), 0), m.thumbnail_file_id
 		   FROM models m
 		   LEFT JOIN model_files f ON f.model_id = m.id
 		  WHERE m.user_id = $1 AND m.parent_id IS NULL
@@ -531,28 +626,89 @@ func (s *Service) List(ctx context.Context, userID int64) ([]Model, error) {
 	// Non-nil so an empty library encodes as [] rather than null, which the
 	// frontend would otherwise have to guard against.
 	models := []Model{}
+	pins := map[int64]*int64{}
 	for rows.Next() {
 		var m Model
-		if err := rows.Scan(&m.ID, &m.Name, &m.CreatedAt, &m.FileCount, &m.TotalSize); err != nil {
+		var pinned *int64
+		if err := rows.Scan(&m.ID, &m.Name, &m.CreatedAt, &m.FileCount, &m.TotalSize, &pinned); err != nil {
 			return nil, fmt.Errorf("library: list: %w", err)
 		}
+		pins[m.ID] = pinned
 		models = append(models, m)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("library: list: %w", err)
 	}
+	if err := s.resolveListThumbnails(ctx, models, pins); err != nil {
+		return nil, err
+	}
 	return models, nil
+}
+
+// resolveListThumbnails fills in ThumbnailFileID for a whole page of models.
+//
+// One extra query for the grid rather than one per tile. It cannot fold into
+// the aggregate above, because that query GROUPs models down to one row each
+// and the thumbnail is a property of a particular file within the group.
+//
+// The rows it needs are the thumbnail-bearing ones, so the WHERE clause filters
+// on has_thumbnail - and then selects it anyway. That looks redundant and is
+// not: pickThumbnail reads the field, and synthesising true from the clause
+// would work until somebody widened the query, at which point every tile in the
+// library would quietly show the wrong picture.
+func (s *Service) resolveListThumbnails(ctx context.Context, models []Model, pins map[int64]*int64) error {
+	if len(models) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(models))
+	for _, m := range models {
+		ids = append(ids, m.ID)
+	}
+
+	rows, err := s.db.Query(ctx,
+		`SELECT model_id, id, type, has_thumbnail
+		   FROM model_files
+		  WHERE model_id = ANY($1) AND has_thumbnail
+		  ORDER BY model_id, id`, ids)
+	if err != nil {
+		return fmt.Errorf("library: list thumbnails: %w", err)
+	}
+	defer rows.Close()
+
+	byModel := map[int64][]File{}
+	for rows.Next() {
+		var modelID int64
+		var f File
+		if err := rows.Scan(&modelID, &f.ID, &f.Type, &f.HasThumbnail); err != nil {
+			return fmt.Errorf("library: list thumbnails: %w", err)
+		}
+		byModel[modelID] = append(byModel[modelID], f)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("library: list thumbnails: %w", err)
+	}
+
+	for i := range models {
+		// Reuse the detail path's resolver rather than repeating the rule, so
+		// the grid and the detail screen cannot disagree about which file is
+		// the model's picture.
+		d := ModelDetail{Files: byModel[models[i].ID]}
+		resolveThumbnail(&d, pins[models[i].ID])
+		models[i].ThumbnailFileID = d.ThumbnailFileID
+	}
+	return nil
 }
 
 // Get returns one model with its files, or ErrNotFound if it does not exist or
 // belongs to somebody else.
 func (s *Service) Get(ctx context.Context, userID, id int64) (ModelDetail, error) {
 	var m ModelDetail
+	var pinned *int64
 	err := s.db.QueryRow(ctx,
-		`SELECT id, name, created_at, description, print_tips, source_url
+		`SELECT id, name, created_at, description, print_tips, source_url, thumbnail_file_id
 		   FROM models WHERE id = $1 AND user_id = $2`,
 		id, userID,
-	).Scan(&m.ID, &m.Name, &m.CreatedAt, &m.Description, &m.PrintTips, &m.SourceURL)
+	).Scan(&m.ID, &m.Name, &m.CreatedAt, &m.Description, &m.PrintTips, &m.SourceURL, &pinned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ModelDetail{}, ErrNotFound
 	}
@@ -563,6 +719,7 @@ func (s *Service) Get(ctx context.Context, userID, id int64) (ModelDetail, error
 	if err := s.loadFiles(ctx, &m); err != nil {
 		return ModelDetail{}, err
 	}
+	resolveThumbnail(&m, pinned)
 	return m, nil
 }
 
@@ -572,7 +729,7 @@ func (s *Service) Get(ctx context.Context, userID, id int64) (ModelDetail, error
 // has to render it rather than guess at a missing key.
 func (s *Service) loadFiles(ctx context.Context, m *ModelDetail) error {
 	rows, err := s.db.Query(ctx,
-		`SELECT id, filename, type, content_type, size_bytes, created_at, extracted_meta
+		`SELECT id, filename, type, content_type, size_bytes, created_at, extracted_meta, has_thumbnail
 		   FROM model_files WHERE model_id = $1 ORDER BY id`, m.ID)
 	if err != nil {
 		return fmt.Errorf("library: get files: %w", err)
@@ -584,7 +741,7 @@ func (s *Service) loadFiles(ctx context.Context, m *ModelDetail) error {
 	for rows.Next() {
 		var f File
 		var meta []byte
-		if err := rows.Scan(&f.ID, &f.Filename, &f.Type, &f.ContentType, &f.Size, &f.CreatedAt, &meta); err != nil {
+		if err := rows.Scan(&f.ID, &f.Filename, &f.Type, &f.ContentType, &f.Size, &f.CreatedAt, &meta, &f.HasThumbnail); err != nil {
 			return fmt.Errorf("library: get files: %w", err)
 		}
 		// Unreadable stored metadata is not a broken model. The rest of the
@@ -637,12 +794,13 @@ func (s *Service) Update(ctx context.Context, userID, id int64, e Edits) (ModelD
 	}
 
 	var m ModelDetail
+	var pinned *int64
 	err := s.db.QueryRow(ctx,
 		`UPDATE models SET name = $3, description = $4, print_tips = $5, source_url = $6
 		  WHERE id = $1 AND user_id = $2
-		RETURNING id, name, created_at, description, print_tips, source_url`,
+		RETURNING id, name, created_at, description, print_tips, source_url, thumbnail_file_id`,
 		id, userID, e.Name, e.Description, e.PrintTips, e.SourceURL,
-	).Scan(&m.ID, &m.Name, &m.CreatedAt, &m.Description, &m.PrintTips, &m.SourceURL)
+	).Scan(&m.ID, &m.Name, &m.CreatedAt, &m.Description, &m.PrintTips, &m.SourceURL, &pinned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ModelDetail{}, ErrNotFound
 	}
@@ -653,6 +811,7 @@ func (s *Service) Update(ctx context.Context, userID, id int64, e Edits) (ModelD
 	if err := s.loadFiles(ctx, &m); err != nil {
 		return ModelDetail{}, err
 	}
+	resolveThumbnail(&m, pinned)
 	return m, nil
 }
 
@@ -805,7 +964,104 @@ func (s *Service) Open(ctx context.Context, userID, modelID, fileID int64) (*os.
 	return fh, f, nil
 }
 
-// removeBlobs unlinks committed blobs. A failure here is logged and otherwise
+// OpenThumbnail returns an open handle to one file's thumbnail PNG, or
+// ErrNotFound if the file does not exist, belongs to somebody else, or has no
+// thumbnail. The caller closes the handle.
+func (s *Service) OpenThumbnail(ctx context.Context, userID, modelID, fileID int64) (*os.File, error) {
+	var key string
+	var has bool
+	err := s.db.QueryRow(ctx,
+		`SELECT f.storage_key, f.has_thumbnail
+		   FROM model_files f JOIN models m ON m.id = f.model_id
+		  WHERE f.id = $1 AND f.model_id = $2 AND m.user_id = $3`,
+		fileID, modelID, userID,
+	).Scan(&key, &has)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("library: open thumbnail: %w", err)
+	}
+	// A file with no thumbnail is a 404: nothing was ever written for it, so
+	// there is no inconsistency to report, and the client asked for a resource
+	// that does not exist.
+	if !has {
+		return nil, ErrNotFound
+	}
+
+	fh, err := os.Open(filepath.Join(s.dir, key+thumbSuffix))
+	if errors.Is(err, os.ErrNotExist) {
+		// Not a 500, unlike a missing blob. A blob is the only copy of what the
+		// user uploaded and losing one is data loss; a thumbnail is derived
+		// from that blob and can be made again, so its absence is a picture
+		// that is not there - which is what 404 means and what the grid already
+		// draws a placeholder for. The log is how I find out, and it fires per
+		// request, so a publish path that quietly stopped writing sidecars is
+		// loud enough without returning a server error to every tile.
+		//
+		// It also covers the ordinary race where a delete commits between the
+		// SELECT above and this Open: the file really is gone by then, and 404
+		// is the truth rather than a consolation.
+		slog.WarnContext(ctx, "library: thumbnail sidecar missing", "key", key, "file_id", fileID)
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("library: open thumbnail %q: %w", key, err)
+	}
+	return fh, nil
+}
+
+// SetThumbnail pins a file as the model's thumbnail, or clears the pin when
+// fileID is nil so the automatic rule takes over again.
+//
+// The UPDATE carries the whole rule rather than trusting a prior SELECT: the
+// subquery is what makes "the file belongs to this model and has a thumbnail"
+// true at write time instead of a moment before it.
+//
+// It narrows the window rather than closing it. A read-committed subquery does
+// not lock the row it found, so a delete committing between the subquery and
+// the foreign key's own check turns the write into a 23503. Taking a lock to
+// prevent that would be machinery for a race whose right answer is already
+// known: the file is gone, the pin is refused, and 422 says so. Mapping the
+// error is the whole fix.
+func (s *Service) SetThumbnail(ctx context.Context, userID, modelID int64, fileID *int64) (ModelDetail, error) {
+	tag, err := s.db.Exec(ctx,
+		`UPDATE models SET thumbnail_file_id = $3
+		  WHERE id = $1 AND user_id = $2
+		    AND ($3::bigint IS NULL OR EXISTS (
+		          SELECT 1 FROM model_files f
+		           WHERE f.id = $3 AND f.model_id = $1 AND f.has_thumbnail))`,
+		modelID, userID, fileID)
+	// "23503" spelled out rather than pulling in github.com/jackc/pgerrcode for
+	// one constant. It is a SQLSTATE, so it is as stable as the name would be.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		return ModelDetail{}, fmt.Errorf("%w: that file is not one of this model's files with a thumbnail", errInvalid)
+	}
+	if err != nil {
+		return ModelDetail{}, fmt.Errorf("library: set thumbnail: %w", err)
+	}
+
+	// No rows updated means one of two different answers, and the UPDATE cannot
+	// tell them apart. A second query decides: if the model is not there it is
+	// a 404, and if it is, the file was the problem and that is the caller's
+	// mistake to fix.
+	if tag.RowsAffected() == 0 {
+		var exists bool
+		err := s.db.QueryRow(ctx,
+			`SELECT true FROM models WHERE id = $1 AND user_id = $2`, modelID, userID).Scan(&exists)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ModelDetail{}, ErrNotFound
+		}
+		if err != nil {
+			return ModelDetail{}, fmt.Errorf("library: set thumbnail: %w", err)
+		}
+		return ModelDetail{}, fmt.Errorf("%w: that file is not one of this model's files with a thumbnail", errInvalid)
+	}
+
+	return s.Get(ctx, userID, modelID)
+}
+
 // ignored: the rows are already gone, so the only cost is disk that nothing
 // references, and there is nothing useful to tell the caller who asked for a
 // delete that did happen.
@@ -813,6 +1069,11 @@ func (s *Service) removeBlobs(ctx context.Context, keys []string) {
 	for _, key := range keys {
 		if err := os.Remove(filepath.Join(s.dir, key)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			slog.WarnContext(ctx, "library: orphaned blob", "key", key, "error", err)
+		}
+		// The sidecar goes with the blob it describes. Most files have none, so
+		// ErrNotExist is the normal outcome and is not worth logging.
+		if err := os.Remove(filepath.Join(s.dir, key+thumbSuffix)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.WarnContext(ctx, "library: orphaned thumbnail", "key", key, "error", err)
 		}
 	}
 }
@@ -822,7 +1083,59 @@ func (s *Service) removeBlobs(ctx context.Context, keys []string) {
 func removeOne(f staged) {
 	if f.tmpPath != "" {
 		os.Remove(f.tmpPath)
+		// Only meaningful once publish has run and tmpPath is the final name,
+		// but running it either way is one syscall against a name that does not
+		// exist, and the alternative is a flag saying which phase we are in.
+		os.Remove(f.tmpPath + thumbSuffix)
 	}
+}
+
+// pickThumbnail chooses the file whose thumbnail stands for the model, or nil.
+//
+// The order is the epic's: an image the user uploaded beats a render the slicer
+// embedded, because a photograph of the finished print is what they went to the
+// trouble of adding. Within a type it is the oldest file, which is stable - a
+// later upload does not silently move the tile - and files arrive ordered by
+// id, so the first match wins with no sort.
+//
+// This resolves in Go and not in SQL because there are four call sites and two
+// of them never read the model back from the database: Create builds its
+// response by hand, and Update returns what it wrote. A SQL rule would be right
+// on the list and the detail read and wrong on both of those.
+func pickThumbnail(files []File) *int64 {
+	for _, want := range []string{"image", "3mf", "gcode"} {
+		for i := range files {
+			if files[i].Type == want && files[i].HasThumbnail {
+				return &files[i].ID
+			}
+		}
+	}
+	return nil
+}
+
+// resolveThumbnail settles a model's thumbnail from its pin and its files.
+//
+// The pin is passed separately rather than read off m, because m's field holds
+// the *resolved* answer: scanning the stored value into it and then overwriting
+// it would make "the user pinned this" and "the rule chose this" the same state
+// halfway through, and the client needs to tell them apart.
+//
+// A pin that no longer has a thumbnail falls back to the rule instead of
+// blanking the tile. That is reachable without anything going wrong: pin a
+// file, and a future milestone that regenerates thumbnails could leave the pin
+// pointing at a file that no longer has one.
+func resolveThumbnail(m *ModelDetail, pinned *int64) {
+	if pinned != nil {
+		for i := range m.Files {
+			if m.Files[i].ID == *pinned && m.Files[i].HasThumbnail {
+				m.ThumbnailFileID = pinned
+				m.ThumbnailAutomatic = false
+				return
+			}
+		}
+	}
+	m.ThumbnailFileID = pickThumbnail(m.Files)
+	m.ThumbnailAutomatic = true
 }
 
 // errInvalid marks the errors that are the client's fault, so the API layer can

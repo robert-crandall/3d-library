@@ -6,6 +6,7 @@
   import EditModelDialog from '$lib/components/EditModelDialog.svelte';
   import UploadDialog from '$lib/components/UploadDialog.svelte';
   import SliceSettings from '$lib/components/SliceSettings.svelte';
+  import Thumbnail from '$lib/components/Thumbnail.svelte';
   import { formatBytes, formatDate, formatFileCount } from '$lib/format';
   import { sliceRows } from '$lib/slice';
   import type { ModelDetail, ModelFile } from '$lib/upload';
@@ -37,6 +38,20 @@
   // to the page: a refused edit does not mean the model on screen is wrong.
   let busy = $state(false);
   let dialogError = $state('');
+  // Separate from `busy`, which belongs to the dialogs. Pinning happens in a
+  // table row with no dialog around it, and it must not disable the dialog
+  // buttons while it runs.
+  let pinning = $state(false);
+
+  // Every mutation on this page is a button, so disabling them all while any
+  // one is in flight is the whole of the concurrency story. Without it a pin
+  // and a delete overlap, and whichever response lands second wins: pin-then-
+  // delete leaves the page showing a file the server no longer has.
+  const mutating = $derived(pinning || busy);
+  // Its own message rather than the page's `error`, which is only rendered by
+  // the `failed` branch: a refused pin must not replace a model that loaded
+  // fine with an error screen.
+  let pinError = $state('');
 
   /**
    * Read the model. Also the "it worked, now show me what is there" path after
@@ -47,6 +62,9 @@
   async function load() {
     status = 'loading';
     error = '';
+    // A pin failure is about the model as it was; a re-read replaces that, so
+    // leaving the banner up would attach it to rows it never described.
+    pinError = '';
     try {
       const { data: body, error: failure, response } = await api.GET('/api/models/{id}', {
         params: { path: { id: data.id } }
@@ -122,6 +140,37 @@
       dialogError = 'Could not reach the server.';
     } finally {
       busy = false;
+    }
+  }
+
+  /**
+   * Pin a file as the model's thumbnail, or pass null to go back to letting the
+   * server pick. One call for both because they are the same write - the field
+   * is nullable and clearing it is what "automatic" means.
+   *
+   * The error goes in the page's `error`, not a dialog's: this is a button in a
+   * table row with no dialog to put it in, and the row is still on screen.
+   */
+  async function pinThumbnail(fileId: number | null) {
+    pinning = true;
+    pinError = '';
+    try {
+      const { data: body, error: failure } = await api.PUT('/api/models/{id}/thumbnail', {
+        params: { path: { id: data.id } },
+        body: { fileId }
+      });
+      if (failure) {
+        pinError = apiErrorMessage(failure, 'Could not change the thumbnail.');
+        return;
+      }
+      // The response is the resolved model, which matters here: pass null and
+      // the server answers with whichever file its own precedence rule chose,
+      // so the page shows the real outcome rather than guessing at it.
+      model = body;
+    } catch {
+      pinError = 'Could not reach the server.';
+    } finally {
+      pinning = false;
     }
   }
 
@@ -202,6 +251,7 @@
         <button
           type="button"
           class="rounded border border-line-strong px-3 py-1.5 text-sm"
+          disabled={mutating}
           onclick={() => ((dialogError = ''), (editing = true))}
         >
           Edit
@@ -209,6 +259,7 @@
         <button
           type="button"
           class="rounded border border-line-strong px-3 py-1.5 text-sm"
+          disabled={mutating}
           onclick={() => ((dialogError = ''), (adding = true))}
         >
           Add files
@@ -216,6 +267,7 @@
         <button
           type="button"
           class="rounded border border-line-strong px-3 py-1.5 text-sm text-danger"
+          disabled={mutating}
           onclick={() => ((dialogError = ''), (deletingModel = true))}
         >
           Delete
@@ -248,6 +300,10 @@
           </span>
         </div>
 
+        {#if pinError}
+          <p role="alert" class="border-b border-line px-4 py-2 text-sm text-danger">{pinError}</p>
+        {/if}
+
         {#if model.files.length === 0}
           <!--
             Reachable: deleting the last file leaves the model, by design - the
@@ -259,6 +315,7 @@
             <button
               type="button"
               class="mt-4 rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink"
+              disabled={mutating}
               onclick={() => ((dialogError = ''), (adding = true))}
             >
               Add files
@@ -268,6 +325,9 @@
           <table class="w-full text-sm">
             <thead>
               <tr class="text-xs text-faint">
+                <th scope="col" class="px-4 py-2 text-left font-medium">
+                  <span class="sr-only">Thumbnail</span>
+                </th>
                 <th scope="col" class="px-4 py-2 text-left font-medium">Name</th>
                 <th scope="col" class="px-4 py-2 text-left font-medium">Type</th>
                 <th scope="col" class="px-4 py-2 text-right font-medium">Size</th>
@@ -280,6 +340,20 @@
             <tbody>
               {#each model.files as file (file.id)}
                 <tr class="border-t border-line">
+                  <td class="py-2.5 pr-0 pl-4">
+                    {#if file.hasThumbnail}
+                      <div class="h-10 w-10 overflow-hidden rounded border border-line">
+                        <Thumbnail
+                          src="/api/models/{model.id}/files/{file.id}/thumbnail"
+                          alt="Preview of {file.filename}"
+                        />
+                      </div>
+                    {:else}
+                      <!-- A fixed-size empty box, not an omitted cell: without
+                           it the rows below a thumbnail-less file jump left. -->
+                      <div class="h-10 w-10" aria-hidden="true"></div>
+                    {/if}
+                  </td>
                   <td class="max-w-0 px-4 py-2.5">
                     <!--
                       A plain link to the download endpoint, not a fetch. The
@@ -296,15 +370,48 @@
                     >
                       {file.filename}
                     </a>
+                    {#if file.id === model.thumbnailFileId}
+                      <!-- The badge says which file the picture comes from, and
+                           whether the user chose it. "Thumbnail (automatic)" is
+                           the difference between "this is what you picked" and
+                           "this is what we picked, and it will change if you
+                           add a better file". -->
+                      <span class="mt-0.5 block text-xs text-muted">
+                        Thumbnail{model.thumbnailAutomatic ? ' (automatic)' : ''}
+                      </span>
+                    {/if}
                   </td>
                   <td class="px-4 py-2.5 text-muted">{file.type}</td>
                   <td class="px-4 py-2.5 text-right text-muted">{formatBytes(file.size)}</td>
                   <td class="px-4 py-2.5 text-muted">{formatDate(file.createdAt)}</td>
                   <td class="px-4 py-2.5 text-right">
+                    {#if file.hasThumbnail && file.id !== model.thumbnailFileId}
+                      <button
+                        type="button"
+                        class="mr-3 text-xs"
+                        disabled={mutating}
+                        onclick={() => pinThumbnail(file.id)}
+                      >
+                        Use as thumbnail
+                      </button>
+                    {:else if file.id === model.thumbnailFileId && !model.thumbnailAutomatic}
+                      <!-- Only offered on the pinned row, and only when the pin
+                           is doing something. On an automatic pick there is
+                           nothing to undo. -->
+                      <button
+                        type="button"
+                        class="mr-3 text-xs"
+                        disabled={mutating}
+                        onclick={() => pinThumbnail(null)}
+                      >
+                        Use automatic
+                      </button>
+                    {/if}
                     <button
                       type="button"
                       class="text-xs text-danger"
                       aria-label="Delete {file.filename}"
+                      disabled={mutating}
                       onclick={() => ((dialogError = ''), (deletingFile = file))}
                     >
                       Delete

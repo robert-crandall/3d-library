@@ -21,9 +21,13 @@ import (
 )
 
 // The two windows, straight from the product brief.
+//
+// Exported because internal/thumb reads the same two windows for the same
+// reason, and two copies of a number that has to match is a number that
+// eventually does not.
 const (
-	headBytes = 16 << 10
-	tailBytes = 128 << 10
+	HeadBytes = 16 << 10
+	TailBytes = 128 << 10
 )
 
 // maxCount bounds every value that becomes an int.
@@ -85,11 +89,11 @@ func Parse(r io.ReaderAt, size int64) (Meta, bool) {
 	// Below the combined window size the two windows would overlap, so the file
 	// is read once instead. Above it, these two ReadAts are the only reads this
 	// package ever makes, whether the file is 1 MB or 1 GB.
-	if size <= headBytes+tailBytes {
+	if size <= HeadBytes+TailBytes {
 		p.scan(window(r, 0, size), true, true)
 	} else {
-		p.scan(window(r, 0, headBytes), true, false)
-		p.scan(window(r, size-tailBytes, tailBytes), false, true)
+		p.scan(window(r, 0, HeadBytes), true, false)
+		p.scan(window(r, size-TailBytes, TailBytes), false, true)
 	}
 
 	m := p.meta()

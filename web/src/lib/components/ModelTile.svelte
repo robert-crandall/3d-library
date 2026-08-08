@@ -1,18 +1,27 @@
 <script lang="ts">
   import { formatBytes, formatFileCount } from '$lib/format';
+  import Thumbnail from '$lib/components/Thumbnail.svelte';
   import type { Model } from '$lib/upload';
 
   let { model }: { model: Model } = $props();
+
+  // The server resolved which file to show; the tile only builds the URL. A
+  // client-side rule here would be a second copy of the precedence order, and
+  // the grid and the detail screen would eventually disagree about which
+  // picture a model has.
+  let src = $derived(
+    model.thumbnailFileId == null
+      ? null
+      : `/api/models/${model.id}/files/${model.thumbnailFileId}/thumbnail`,
+  );
 </script>
 
 <!--
-  One tile in the grid. Name, file count, total size - the three facts the
-  milestone asks for.
-
-  The thumbnail is a hatched placeholder for every model. Rendering a real
-  preview means parsing an STL in the browser, which is a later milestone; a
-  uniform placeholder is honest about that, where showing the first image file
-  for some models and nothing for others would read as broken.
+  One tile in the grid. Name, file count, total size, and the thumbnail the
+  server picked - an image the user uploaded, or the render the slicer embedded
+  in a 3MF or a G-code file. A model with none of those keeps the hatched
+  placeholder, which is honest rather than broken-looking: nothing in this app
+  rasterises an STL, so plenty of models legitimately have no picture.
 
   The whole tile is the link, not just the name: the thumbnail is the biggest
   thing on it and the obvious thing to click, and a 42px-tall target beats a
@@ -22,11 +31,11 @@
   class="block overflow-hidden rounded-tile border border-line bg-surface"
   href="/models/{model.id}"
 >
-  <div
-    class="h-42 border-b border-line"
-    style="background-image: repeating-linear-gradient(45deg, var(--color-line) 0 1px, transparent 1px 9px)"
-    aria-hidden="true"
-  ></div>
+  <div class="h-42 border-b border-line">
+    <!-- alt="" and not the model name: the name is rendered right below, so
+         reading it twice is noise to a screen reader. -->
+    <Thumbnail {src} />
+  </div>
   <div class="px-3.5 py-3">
     <h2 class="truncate text-sm font-medium" title={model.name}>{model.name}</h2>
     <p class="mt-1 text-xs text-muted">

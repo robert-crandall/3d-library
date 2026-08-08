@@ -365,3 +365,170 @@ describe('model detail page', () => {
     expect(within(screen.getByRole('dialog')).queryByRole('alert')).toBeNull();
   });
 });
+
+// The thumbnail controls are the only place the user can override what the
+// server picked, so what they say and when they appear is the whole feature.
+describe('model detail thumbnails', () => {
+  const withThumbs = {
+    ...model,
+    fileCount: 2,
+    thumbnailFileId: 10,
+    thumbnailAutomatic: true,
+    files: [
+      { ...file, hasThumbnail: true },
+      {
+        id: 11,
+        filename: 'printed.png',
+        type: 'image',
+        contentType: 'image/png',
+        size: 200 * 1024,
+        createdAt: '2026-03-12T09:01:00Z',
+        hasThumbnail: true
+      }
+    ]
+  };
+
+  // A weaker test would assert the badge exists. The word "automatic" is the
+  // distinction it is there to draw: this pick moves on its own when a better
+  // file arrives, and a pinned one does not.
+  it('says when the thumbnail was chosen for you', async () => {
+    get.mockResolvedValue({ data: withThumbs });
+    render(ModelPage, { data });
+
+    expect(await screen.findByText('Thumbnail (automatic)')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Use as thumbnail' })).toBeTruthy();
+    // Nothing to undo on an automatic pick.
+    expect(screen.queryByRole('button', { name: 'Use automatic' })).toBeNull();
+  });
+
+  it('pins a file and renders what the server resolved', async () => {
+    get.mockResolvedValue({ data: withThumbs });
+    put.mockResolvedValue({
+      data: { ...withThumbs, thumbnailFileId: 11, thumbnailAutomatic: false }
+    });
+    render(ModelPage, { data });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Use as thumbnail' }));
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(put.mock.calls[0][0]).toBe('/api/models/{id}/thumbnail');
+    expect(put.mock.calls[0][1].body).toEqual({ fileId: 11 });
+    // The response is the resolved model, so no second GET is needed and none
+    // is made - one read, one truth.
+    expect(get).toHaveBeenCalledTimes(1);
+
+    // Scoped to the row, because the column header carries the same word for
+    // screen readers.
+    const row = await waitFor(() => {
+      const cell = screen.getByTitle('printed.png').closest('tr');
+      if (!cell) throw new Error('no row');
+      return cell;
+    });
+    await waitFor(() => expect(within(row).getByText('Thumbnail')).toBeTruthy());
+    expect(screen.queryByText('Thumbnail (automatic)')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Use automatic' })).toBeTruthy();
+  });
+
+  // null, not an omitted key: the column is nullable and clearing it is the
+  // entire request. Leaving it out would be a no-op the user reads as a bug.
+  it('clears a pin by sending null', async () => {
+    get.mockResolvedValue({
+      data: { ...withThumbs, thumbnailFileId: 11, thumbnailAutomatic: false }
+    });
+    put.mockResolvedValue({ data: withThumbs });
+    render(ModelPage, { data });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Use automatic' }));
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(put.mock.calls[0][1].body).toEqual({ fileId: null });
+  });
+
+  // A file with no thumbnail can never be the model's, so offering the button
+  // would be offering a guaranteed 422.
+  it('does not offer to pin a file that has no thumbnail', async () => {
+    get.mockResolvedValue({
+      data: {
+        ...withThumbs,
+        files: [
+          { ...file, hasThumbnail: true },
+          {
+            id: 11,
+            filename: 'notes.txt',
+            type: 'document',
+            contentType: 'text/plain',
+            size: 400,
+            createdAt: '2026-03-12T09:01:00Z',
+            hasThumbnail: false
+          }
+        ]
+      }
+    });
+    render(ModelPage, { data });
+
+    expect(await screen.findByText('notes.txt')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Use as thumbnail' })).toBeNull();
+  });
+
+  // The failure goes on the page, not in a dialog, because the row that caused
+  // it is still on screen. What matters is that the page survives it: a refused
+  // write is not a failed read, so the model must not be discarded.
+  it('reports a refused pin and keeps the model on screen', async () => {
+    get.mockResolvedValue({ data: withThumbs });
+    put.mockResolvedValue({
+      error: { title: 'Unprocessable Entity', errors: [{ message: 'that file has no thumbnail' }] }
+    });
+    render(ModelPage, { data });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Use as thumbnail' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('that file has no thumbnail');
+    expect(screen.getByText('dry-box-body.3mf')).toBeTruthy();
+  });
+
+  // Every mutation is disabled while any one is in flight. Without this a pin
+  // and a delete overlap and the later response wins, leaving the page showing
+  // a file the server no longer has.
+  // Both thumbnail states, because they offer different buttons: "Use
+  // automatic" only exists once something is pinned, so a table driven only by
+  // the automatic fixture never renders it and never notices it staying live.
+  //
+  // Naming every button individually matters too. Asserting "some button is
+  // disabled" would survive dropping the attribute from any single control.
+  for (const tc of [
+    { state: 'an automatic pick', pinned: false, click: 'Use as thumbnail' },
+    { state: 'a pinned file', pinned: true, click: 'Use automatic' }
+  ]) {
+    it(`locks the other mutations while a pin is in flight from ${tc.state}`, async () => {
+      const state = { ...withThumbs, thumbnailAutomatic: !tc.pinned };
+      get.mockResolvedValue({ data: state });
+      let release: (value: unknown) => void = () => {};
+      put.mockReturnValue(new Promise((resolve) => (release = resolve)));
+      render(ModelPage, { data });
+
+      await fireEvent.click(await screen.findByRole('button', { name: tc.click }));
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(true)
+      );
+      const locked = [
+        'Add files',
+        'Delete',
+        'Use as thumbnail',
+        'Delete dry-box-body.3mf',
+        'Delete printed.png'
+      ];
+      if (tc.pinned) locked.push('Use automatic');
+      for (const name of locked) {
+        expect(screen.getByRole('button', { name }).hasAttribute('disabled')).toBe(true);
+      }
+
+      release({ data: state });
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false)
+      );
+    });
+  }
+});

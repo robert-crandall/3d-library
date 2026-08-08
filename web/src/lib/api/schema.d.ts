@@ -223,6 +223,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/models/{id}/files/{fileId}/thumbnail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a file's thumbnail
+         * @description The PNG extracted from the file at upload time. 404 when the file has none.
+         */
+        get: operations["get-model-file-thumbnail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/models/{id}/thumbnail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Choose a model's thumbnail
+         * @description Pins one of the model's files as its thumbnail. Send null to clear the pin and let the server choose: an image first, then a 3MF's embedded render, then a G-code's.
+         */
+        put: operations["set-model-thumbnail"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/push/subscribe": {
         parameters: {
             query?: never;
@@ -465,6 +505,7 @@ export interface components {
             createdAt: string;
             extractedMeta?: components["schemas"]["Meta"];
             filename: string;
+            hasThumbnail: boolean;
             /** Format: int64 */
             id: number;
             /** Format: int64 */
@@ -512,6 +553,8 @@ export interface components {
             id: number;
             name: string;
             /** Format: int64 */
+            thumbnailFileId?: number;
+            /** Format: int64 */
             totalSize: number;
         };
         ModelDetail: {
@@ -532,6 +575,9 @@ export interface components {
             name: string;
             printTips: string;
             sourceUrl: string;
+            thumbnailAutomatic: boolean;
+            /** Format: int64 */
+            thumbnailFileId?: number;
             /** Format: int64 */
             totalSize: number;
         };
@@ -580,6 +626,19 @@ export interface components {
             name?: string;
             /** @description Password (8-72 chars) */
             password: string;
+        };
+        SetThumbnailInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/SetThumbnailInputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description The file to pin, or null to let the server choose
+             */
+            fileId: number | null;
         };
         Subscription: {
             /**
@@ -1413,6 +1472,127 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-model-file-thumbnail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+                fileId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The thumbnail, always PNG. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "set-model-thumbnail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetThumbnailInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelDetail"];
+                };
             };
             /** @description Unauthorized */
             401: {
