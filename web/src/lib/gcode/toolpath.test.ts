@@ -785,3 +785,36 @@ describe('spreadRange', () => {
     expect(spreadRange([4, 1], 5)).toEqual([4, 1]);
   });
 });
+
+describe('unretract', () => {
+  // Cura's end block verbatim. Without the XY guard this reads as a deposit at
+  // Z 2.97, and a 0.7 mm-tall print reports as 2.7 mm tall - which is what the
+  // panel showed against the real file before this was fixed.
+  const END = ['G91', 'G0 F15000 X8.0 Z0.5 E-4.5', 'G0 F10000 Z1.5 E4.5', 'G90'].join('\n');
+
+  it('does not print when the nozzle only refills', () => {
+    const before = parse(ANCHORED);
+    const after = parse([ANCHORED, END].join('\n'));
+    expect(after.bounds).toEqual(before.bounds);
+  });
+
+  it('counts the refill as travel, because that is where the nozzle went', () => {
+    const after = parse([ANCHORED, END].join('\n'));
+    // Two moves in the end block: the wipe (X+8, Z+0.5) and the Z-only refill.
+    expect(after.travelSegments).toBe(parse(ANCHORED).travelSegments + 2);
+  });
+
+  it('still prints a move that crosses the plate while extruding', () => {
+    // The guard is XY movement, not "has a Z change": a vase-mode move rises in
+    // Z and extrudes on every segment, and dropping those empties the model.
+    const spiral = parse([PRIMED, ';LAYER_CHANGE', 'G1 X5 Y5 Z0.4 E9'].join('\n'));
+    expect(spiral.extrusionSegments).toBeGreaterThan(0);
+    expect(spiral.bounds.max[2]).toBeCloseTo(0.4);
+  });
+
+  it('ignores a stationary prime with no movement at all', () => {
+    const primed = parse([ANCHORED, 'G1 E99'].join('\n'));
+    expect(primed.extrusionSegments).toBe(parse(ANCHORED).extrusionSegments);
+    expect(primed.travelSegments).toBe(parse(ANCHORED).travelSegments);
+  });
+});

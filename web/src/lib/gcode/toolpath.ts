@@ -538,9 +538,15 @@ export function createToolpathParser(options: ToolpathOptions = {}): ToolpathPar
     const y = axisTarget(hasY, valY, py, offsetY);
     const z = axisTarget(hasZ, valZ, pz, offsetZ);
     const deltaE = extrusionDelta();
-    const moved = x !== px || y !== py || z !== pz;
+    const movedXY = x !== px || y !== py;
+    const moved = movedXY || z !== pz;
     if (moved) {
-      const extruding = deltaE > 0;
+      // Extrusion needs the nozzle to travel across the plate. A positive E with
+      // no XY movement is an unretract: the filament refills the melt zone and
+      // nothing lands. Cura's end block is `G91` then `G0 Z1.5 E4.5`, which read
+      // as a deposit puts a point 2 mm above the print and reports a 15x15x2.7 mm
+      // object where the real one is 0.7 mm tall.
+      const extruding = deltaE > 0 && movedXY;
       if (!positioned && !extruding) {
         // Where this move started is unknown, so there is nothing to draw. An
         // extruding first move is drawn anyway: the start point is just as unknown,
