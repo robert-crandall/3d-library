@@ -195,7 +195,10 @@ func uploadError(err error) error {
 	case errors.Is(err, errInvalid):
 		return huma.Error422UnprocessableEntity(err.Error())
 	default:
-		return err
+		// The two cases above are the app's own sentences, written to be read.
+		// Anything else is wrapped from pgx or the disk, so it goes to the log
+		// and the caller gets a sentence. Same rule as internalError below.
+		return internalError("could not save the model", err)
 	}
 }
 

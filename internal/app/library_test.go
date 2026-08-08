@@ -1642,4 +1642,18 @@ func TestUnexpectedFailuresDoNotLeakInternals(t *testing.T) {
 			t.Errorf("problem detail leaks %q: %s", secret, out)
 		}
 	}
+
+	// The other half of the same rule: the app's own sentences must still get
+	// through. Update shares its error mapping with upload, and masking that
+	// mapping's 422 would leave the edit dialog with nothing to show. A blank
+	// name reaches it - huma's `required` means present, not non-empty, so this
+	// is the service's own refusal and not schema validation.
+	resp, out = c.send(http.MethodPut, fmt.Sprintf("/api/models/%d", model.ID),
+		`{"name":"   ","description":"","printTips":"","sourceUrl":""}`)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("update: got %d: %s", resp.StatusCode, out)
+	}
+	if !strings.Contains(out, "a model needs a name") {
+		t.Errorf("422 should say what was wrong: %s", out)
+	}
 }
