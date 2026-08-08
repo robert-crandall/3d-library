@@ -30,6 +30,8 @@ func Register(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	registerDeleteModel(api, svc, currentUser)
 	registerDeleteFile(api, svc, currentUser)
 	registerDownload(api, svc, currentUser)
+	registerThumbnail(api, svc, currentUser)
+	registerSetThumbnail(api, svc, currentUser)
 }
 
 // uploadInput carries the streaming multipart reader from the resolver to the
@@ -475,6 +477,119 @@ func registerDownload(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 			// If-Modified-Since is skipped.
 			http.ServeContent(w, r, meta.Filename, meta.CreatedAt, fh)
 		}}, nil
+	})
+}
+
+// registerThumbnail serves the PNG extracted for one file.
+//
+// The route is nested under the model, matching the download route beside it,
+// so the ownership check is the same join and a file id on its own is never a
+// key to anything.
+func registerThumbnail(api huma.API, svc *Service, currentUser CurrentUserFunc) {
+	huma.Register(api, huma.Operation{
+		OperationID: "get-model-file-thumbnail",
+		Summary:     "Get a file's thumbnail",
+		Description: "The PNG extracted from the file at upload time. 404 when the file has none.",
+		Method:      http.MethodGet,
+		Path:        "/api/models/{id}/files/{fileId}/thumbnail",
+		Tags:        []string{"library"},
+		Errors:      []int{http.StatusUnauthorized, http.StatusNotFound},
+		Security:    apisec.User(api),
+
+		// Same reason as the download route: huma cannot infer a body schema
+		// from StreamResponse. Unlike that route the type is not a guess - the
+		// extractor only ever writes PNG.
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "The thumbnail, always PNG.",
+				Content: map[string]*huma.MediaType{
+					"image/png": {
+						Schema: &huma.Schema{Type: "string", Format: "binary"},
+					},
+				},
+			},
+		},
+	}, func(ctx context.Context, in *struct {
+		ID     int64 `path:"id"`
+		FileID int64 `path:"fileId"`
+	}) (*huma.StreamResponse, error) {
+		userID, err := currentUser(ctx)
+		if err != nil {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		fh, err := svc.OpenThumbnail(ctx, userID, in.ID, in.FileID)
+		if errors.Is(err, ErrNotFound) {
+			return nil, huma.Error404NotFound("thumbnail not found")
+		}
+		if err != nil {
+			return nil, internalError("could not read the thumbnail", err)
+		}
+
+		return &huma.StreamResponse{Body: func(hctx huma.Context) {
+			defer fh.Close()
+			r, w := humachi.Unwrap(hctx)
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			// Inline, unlike the download route: this one is rendered in an
+			// <img>, and the type is fixed at image/png rather than sniffed
+			// from user bytes, so the reasoning that makes the download route
+			// an attachment does not apply.
+			//
+			// Per-user and deletable, so it must not be cached without
+			// revalidation: a browser cache keys on URL, not on session.
+			w.Header().Set("Cache-Control", "private, no-cache")
+			// ServeContent for Content-Length and conditional requests, the
+			// same as the download route. The modtime is the sidecar's, so a
+			// regenerated thumbnail invalidates a cached one; a stat that fails
+			// degrades to no If-Modified-Since rather than to an error.
+			var mod time.Time
+			if fi, err := fh.Stat(); err == nil {
+				mod = fi.ModTime()
+			}
+			http.ServeContent(w, r, "thumbnail.png", mod, fh)
+		}}, nil
+	})
+}
+
+// setThumbnailInput is the pin request. FileID is a pointer so null is
+// expressible: null means "back to automatic", which is a real instruction and
+// not a missing field, and a plain int64 would make 0 the only way to say it.
+type setThumbnailInput struct {
+	ID   int64 `path:"id"`
+	Body struct {
+		FileID *int64 `json:"fileId" required:"true" doc:"The file to pin, or null to let the server choose"`
+	}
+}
+
+// registerSetThumbnail pins one of a model's files as its thumbnail.
+//
+// PUT rather than PATCH: the request carries the whole value of one named
+// thing, and sending it twice does the same as sending it once.
+func registerSetThumbnail(api huma.API, svc *Service, currentUser CurrentUserFunc) {
+	huma.Register(api, huma.Operation{
+		OperationID: "set-model-thumbnail",
+		Summary:     "Choose a model's thumbnail",
+		Description: "Pins one of the model's files as its thumbnail. Send null to " +
+			"clear the pin and let the server choose: an image first, then a 3MF's " +
+			"embedded render, then a G-code's.",
+		Method:   http.MethodPut,
+		Path:     "/api/models/{id}/thumbnail",
+		Tags:     []string{"library"},
+		Errors:   []int{http.StatusUnauthorized, http.StatusNotFound, http.StatusUnprocessableEntity},
+		Security: apisec.User(api),
+	}, func(ctx context.Context, in *setThumbnailInput) (*modelOutput, error) {
+		userID, err := currentUser(ctx)
+		if err != nil {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		model, err := svc.SetThumbnail(ctx, userID, in.ID, in.Body.FileID)
+		if errors.Is(err, ErrNotFound) {
+			return nil, huma.Error404NotFound("model not found")
+		}
+		if err != nil {
+			return nil, uploadError(err)
+		}
+		return &modelOutput{Body: model}, nil
 	})
 }
 

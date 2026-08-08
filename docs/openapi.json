@@ -293,6 +293,9 @@
           "filename": {
             "type": "string"
           },
+          "hasThumbnail": {
+            "type": "boolean"
+          },
           "id": {
             "format": "int64",
             "type": "integer"
@@ -311,7 +314,8 @@
           "type",
           "contentType",
           "size",
-          "createdAt"
+          "createdAt",
+          "hasThumbnail"
         ],
         "type": "object"
       },
@@ -405,6 +409,10 @@
           "name": {
             "type": "string"
           },
+          "thumbnailFileId": {
+            "format": "int64",
+            "type": "integer"
+          },
           "totalSize": {
             "format": "int64",
             "type": "integer"
@@ -461,6 +469,13 @@
           "sourceUrl": {
             "type": "string"
           },
+          "thumbnailAutomatic": {
+            "type": "boolean"
+          },
+          "thumbnailFileId": {
+            "format": "int64",
+            "type": "integer"
+          },
           "totalSize": {
             "format": "int64",
             "type": "integer"
@@ -475,7 +490,8 @@
           "description",
           "printTips",
           "sourceUrl",
-          "files"
+          "files",
+          "thumbnailAutomatic"
         ],
         "type": "object"
       },
@@ -580,6 +596,32 @@
         "required": [
           "email",
           "password"
+        ],
+        "type": "object"
+      },
+      "SetThumbnailInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/SetThumbnailInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "fileId": {
+            "description": "The file to pin, or null to let the server choose",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "fileId"
         ],
         "type": "object"
       },
@@ -1853,6 +1895,189 @@
           }
         ],
         "summary": "Download a file's contents",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/models/{id}/files/{fileId}/thumbnail": {
+      "get": {
+        "description": "The PNG extracted from the file at upload time. 404 when the file has none.",
+        "operationId": "get-model-file-thumbnail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "fileId",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The thumbnail, always PNG."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get a file's thumbnail",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/models/{id}/thumbnail": {
+      "put": {
+        "description": "Pins one of the model's files as its thumbnail. Send null to clear the pin and let the server choose: an image first, then a 3MF's embedded render, then a G-code's.",
+        "operationId": "set-model-thumbnail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetThumbnailInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelDetail"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Choose a model's thumbnail",
         "tags": [
           "library"
         ]

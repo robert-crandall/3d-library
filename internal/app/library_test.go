@@ -206,23 +206,31 @@ func decodeModel(t *testing.T, body string) library.ModelDetail {
 	return m
 }
 
-// blobs lists the real (non-temp) files in dir, plus any leftover temp files.
-// Both halves matter: a test that only counted blobs would pass while every
-// failed upload left a .tmp- file behind forever.
-func blobs(t *testing.T, dir string) (final, temp []string) {
+// blobs sorts the upload directory into the three things it can hold: real
+// blobs, thumbnail sidecars, and leftover temp files.
+//
+// Three lists rather than two, because a sidecar is not a blob and lumping them
+// together would break both directions. A test counting "everything that is not
+// a temp file" would see a two-file upload as three files, and - worse - a
+// sidecar leaked by a failed or deleted upload would be indistinguishable from
+// the blob it should have been removed with.
+func blobs(t *testing.T, dir string) (final, sidecars, temp []string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read %s: %v", dir, err)
 	}
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".tmp-") {
+		switch {
+		case strings.HasPrefix(e.Name(), ".tmp-"):
 			temp = append(temp, e.Name())
-		} else {
+		case strings.HasSuffix(e.Name(), ".thumb"):
+			sidecars = append(sidecars, e.Name())
+		default:
 			final = append(final, e.Name())
 		}
 	}
-	return final, temp
+	return final, sidecars, temp
 }
 
 // waitFor polls until cond holds, so a test can wait for the thing it actually
@@ -267,7 +275,7 @@ func TestUploadThenBrowse(t *testing.T) {
 		t.Errorf("totalSize = %d, want %d", created.TotalSize, want)
 	}
 
-	final, temp := blobs(t, dir)
+	final, _, temp := blobs(t, dir)
 	if len(final) != 3 {
 		t.Errorf("stored %d blobs, want 3: %v", len(final), final)
 	}
@@ -392,7 +400,7 @@ func TestLibraryRequiresAuthentication(t *testing.T) {
 		}
 	}
 
-	final, temp := blobs(t, dir)
+	final, _, temp := blobs(t, dir)
 	if len(final) != 0 || len(temp) != 0 {
 		t.Errorf("anonymous upload wrote to disk: %v %v", final, temp)
 	}
@@ -415,7 +423,7 @@ func TestOversizedFileIsRejectedAndCleanedUp(t *testing.T) {
 		t.Fatalf("got %d, want 413: %s", resp.StatusCode, body)
 	}
 
-	final, temp := blobs(t, dir)
+	final, _, temp := blobs(t, dir)
 	if len(final) != 0 || len(temp) != 0 {
 		t.Errorf("rejected upload left files behind: final=%v temp=%v", final, temp)
 	}
@@ -463,14 +471,14 @@ func TestTooManyFilesIsRejectedAndCleanedUp(t *testing.T) {
 	}
 	full := decodeModel(t, body)
 
-	before, _ := blobs(t, dir)
+	before, _, _ := blobs(t, dir)
 	ct, part := filePart(t, "one-too-many.stl", "solid")
 	resp, body = c.addFile(full.ID, ct, part)
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("got %d, want 422: %s", resp.StatusCode, body)
 	}
 
-	final, temp := blobs(t, dir)
+	final, _, temp := blobs(t, dir)
 	if len(final) != len(before) || len(temp) != 0 {
 		t.Errorf("the refused file left something behind: final=%v temp=%v", final, temp)
 	}
@@ -551,7 +559,7 @@ func TestNonFilePartsAreRejected(t *testing.T) {
 			if resp.StatusCode != http.StatusUnprocessableEntity {
 				t.Fatalf("got %d, want 422: %s", resp.StatusCode, body)
 			}
-			if final, temp := blobs(t, dir); len(final) != 0 || len(temp) != 0 {
+			if final, _, temp := blobs(t, dir); len(final) != 0 || len(temp) != 0 {
 				t.Errorf("wrote files anyway: final=%v temp=%v", final, temp)
 			}
 		})
@@ -583,7 +591,7 @@ func TestUploadRefusesANonMultipartContentType(t *testing.T) {
 	if !strings.Contains(out, "multipart/form-data") {
 		t.Errorf("the error does not say what was expected: %s", out)
 	}
-	if final, temp := blobs(t, dir); len(final) != 0 || len(temp) != 0 {
+	if final, _, temp := blobs(t, dir); len(final) != 0 || len(temp) != 0 {
 		t.Errorf("wrote files anyway: final=%v temp=%v", final, temp)
 	}
 }
@@ -615,7 +623,7 @@ func TestPartialUploadKeepsWhatCommittedAndNothingElse(t *testing.T) {
 		t.Fatalf("got %d, want 413: %s", resp.StatusCode, body)
 	}
 
-	final, temp := blobs(t, dir)
+	final, _, temp := blobs(t, dir)
 	if len(final) != 1 || len(temp) != 0 {
 		t.Errorf("want exactly the one committed blob: final=%v temp=%v", final, temp)
 	}
@@ -640,7 +648,7 @@ func TestFailedFirstFileCreatesNoModel(t *testing.T) {
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("got %d, want 413: %s", resp.StatusCode, body)
 	}
-	if final, temp := blobs(t, dir); len(final) != 0 || len(temp) != 0 {
+	if final, _, temp := blobs(t, dir); len(final) != 0 || len(temp) != 0 {
 		t.Errorf("left files behind: final=%v temp=%v", final, temp)
 	}
 	if strings.TrimSpace(mustGet(t, c, "/api/models")) != "[]" {
@@ -663,14 +671,14 @@ func TestAddFileToAnotherUsersModelIsNotFound(t *testing.T) {
 	}
 	mine := decodeModel(t, body)
 
-	before, _ := blobs(t, dir)
+	before, _, _ := blobs(t, dir)
 	intruder := signIn(t, ts, "intruder2@example.com")
 	ct, part := filePart(t, "theirs.stl", "solid")
 	resp, body = intruder.addFile(mine.ID, ct, part)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("got %d, want 404: %s", resp.StatusCode, body)
 	}
-	if final, temp := blobs(t, dir); len(final) != len(before) || len(temp) != 0 {
+	if final, _, temp := blobs(t, dir); len(final) != len(before) || len(temp) != 0 {
 		t.Errorf("the refused upload left files behind: final=%v temp=%v", final, temp)
 	}
 }
@@ -705,7 +713,7 @@ func TestOversizedBodyIsRejectedWhileStillStreaming(t *testing.T) {
 	if body.read > total/2 {
 		t.Errorf("server read %d of %d bytes - the body cap is not engaging", body.read, total)
 	}
-	if final, temp := blobs(t, dir); len(final) != 0 || len(temp) != 0 {
+	if final, _, temp := blobs(t, dir); len(final) != 0 || len(temp) != 0 {
 		t.Errorf("rejected body left files behind: final=%v temp=%v", final, temp)
 	}
 }
@@ -761,13 +769,17 @@ func TestDatabaseFailureBeforeCommitLeavesNothing(t *testing.T) {
 	c := signIn(t, ts, "dbdown@example.com")
 	libPool.Close()
 
-	resp, body := c.upload("Doomed", map[string]string{"a.stl": "solid"})
+	// A PNG rather than an STL, because a PNG is a file the upload extracts a
+	// thumbnail for: the sidecar is written in the same phase as the blob, and
+	// an STL never produces one, so an STL would let a cleanup path that
+	// forgets sidecars pass this test unchanged.
+	resp, body := c.upload("Doomed", map[string]string{"a.png": thumbFixture(t, "render.png")})
 	if resp.StatusCode < 500 {
 		t.Fatalf("got %d, want a 5xx: %s", resp.StatusCode, body)
 	}
-	final, temp := blobs(t, dir)
-	if len(final) != 0 || len(temp) != 0 {
-		t.Errorf("failed insert left files behind: final=%v temp=%v", final, temp)
+	final, sidecars, temp := blobs(t, dir)
+	if len(final) != 0 || len(sidecars) != 0 || len(temp) != 0 {
+		t.Errorf("failed insert left files behind: final=%v sidecars=%v temp=%v", final, sidecars, temp)
 	}
 }
 
@@ -800,7 +812,7 @@ func TestHostileFilenamesAreNeutralized(t *testing.T) {
 			}
 		}
 	}
-	final, _ := blobs(t, dir)
+	final, _, _ := blobs(t, dir)
 	if len(final) != 3 {
 		t.Fatalf("stored %d blobs, want 3: %v", len(final), final)
 	}
@@ -935,7 +947,7 @@ func TestRacingUploadsCannotExceedMaxFiles(t *testing.T) {
 	}
 	// The loser's bytes must not be left behind either: it staged a blob before
 	// it ever reached the lock.
-	final, temp := blobs(t, dir)
+	final, _, temp := blobs(t, dir)
 	if len(final) != 3 || len(temp) != 0 {
 		t.Errorf("got %d blobs and %d temp files, want 3 and 0", len(final), len(temp))
 	}
@@ -1065,7 +1077,7 @@ func TestAbandonedUploadCommitsNothing(t *testing.T) {
 	// created anything at all, which proves nothing: of course an upload that
 	// never started committed nothing.
 	waitFor(t, "the server to stage the partial upload", func() bool {
-		_, temp := blobs(t, dir)
+		_, _, temp := blobs(t, dir)
 		return len(temp) == 1
 	})
 	abandon()
@@ -1076,7 +1088,7 @@ func TestAbandonedUploadCommitsNothing(t *testing.T) {
 	// The client sees the connection go before the handler has finished
 	// unwinding, so poll for the cleanup rather than sleeping past it.
 	waitFor(t, "the server to remove the staged file", func() bool {
-		final, temp := blobs(t, dir)
+		final, _, temp := blobs(t, dir)
 		return len(final) == 0 && len(temp) == 0
 	})
 
@@ -1258,7 +1270,7 @@ func TestAddingFilesToAnExistingModel(t *testing.T) {
 	if want := int64(len("solid a") + len("G28 ; home")); got.TotalSize != want {
 		t.Errorf("totalSize = %d, want %d", got.TotalSize, want)
 	}
-	if final, temp := blobs(t, dir); len(final) != 2 || len(temp) != 0 {
+	if final, _, temp := blobs(t, dir); len(final) != 2 || len(temp) != 0 {
 		t.Errorf("blobs = %v, temp = %v, want 2 and none", final, temp)
 	}
 }
@@ -1303,7 +1315,7 @@ func TestDeletingAFileLeavesTheModel(t *testing.T) {
 	if got.TotalSize != int64(len("solid keep")) {
 		t.Errorf("totalSize = %d, want %d", got.TotalSize, len("solid keep"))
 	}
-	if final, temp := blobs(t, dir); len(final) != 1 || len(temp) != 0 {
+	if final, _, temp := blobs(t, dir); len(final) != 1 || len(temp) != 0 {
 		t.Errorf("blobs = %v, temp = %v, want 1 and none", final, temp)
 	}
 
@@ -1320,7 +1332,7 @@ func TestDeletingAFileLeavesTheModel(t *testing.T) {
 	if !strings.Contains(raw, `"files":[]`) {
 		t.Errorf("an empty model serves %s, want files as an empty array", raw)
 	}
-	if final, _ := blobs(t, dir); len(final) != 0 {
+	if final, _, _ := blobs(t, dir); len(final) != 0 {
 		t.Errorf("blobs = %v, want none", final)
 	}
 }
@@ -1365,7 +1377,7 @@ func TestDeletingAModelRemovesEverything(t *testing.T) {
 			t.Errorf("%s still downloads: got %d", path, resp.StatusCode)
 		}
 	}
-	if final, temp := blobs(t, dir); len(final) != 1 || len(temp) != 0 {
+	if final, _, temp := blobs(t, dir); len(final) != 1 || len(temp) != 0 {
 		t.Errorf("blobs = %v, temp = %v, want only the bystander's", final, temp)
 	}
 	if got := decodeModel(t, mustGet(t, c, fmt.Sprintf("/api/models/%d", bystander.ID))); got.FileCount != 1 {
@@ -1406,7 +1418,7 @@ func TestDeletedModelSurvivesAnUnlinkableBlob(t *testing.T) {
 	}
 	model := decodeModel(t, body)
 
-	final, _ := blobs(t, dir)
+	final, _, _ := blobs(t, dir)
 	if len(final) != 1 {
 		t.Fatalf("blobs = %v, want exactly one to wedge", final)
 	}
@@ -1565,7 +1577,7 @@ func TestAnotherUserCannotTouchAModel(t *testing.T) {
 	if got.Name != "Private" || got.FileCount != 1 {
 		t.Errorf("the owner's model changed: %+v", got)
 	}
-	if final, _ := blobs(t, dir); len(final) != 1 {
+	if final, _, _ := blobs(t, dir); len(final) != 1 {
 		t.Errorf("blobs = %v, want the owner's one", final)
 	}
 }
@@ -1622,7 +1634,7 @@ func TestUnexpectedFailuresDoNotLeakInternals(t *testing.T) {
 	}
 	model := decodeModel(t, body)
 
-	final, _ := blobs(t, dir)
+	final, _, _ := blobs(t, dir)
 	if len(final) != 1 {
 		t.Fatalf("blobs = %v, want one", final)
 	}
