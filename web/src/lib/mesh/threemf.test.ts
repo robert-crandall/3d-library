@@ -521,4 +521,42 @@ describe('parse3mf: bounds on hostile input', () => {
       parse3mf(coreOnly3mf({ objects: `<object id="1" type="model">${mesh}</object>` })),
     ).toThrow(/corrupt/i);
   });
+
+  it('refuses a transform that pushes a legal vertex past a float32', () => {
+    // Every vertex here fits a float32 comfortably. The overflow only exists once the
+    // build item's translation is applied, so a check on the raw attributes cannot see it.
+    expect(() =>
+      parse3mf(
+        coreOnly3mf({ items: '<item objectid="1" transform="1 0 0 0 1 0 0 0 1 1e100 0 0"/>' }),
+      ),
+    ).toThrow(/corrupt/i);
+  });
+
+  it('accepts a vertex that only fits a float32 after the unit scale shrinks it', () => {
+    // The mirror of the case above, and the reason the check cannot live on the raw
+    // attribute: 1e39 overflows a float32 on its own but is 1e36 once micron becomes
+    // millimetre. The magnitudes are absurd for a printable part - what this pins is the
+    // stage the check happens at, not a file anyone will open.
+    const mesh =
+      `<mesh><vertices>` +
+      `<vertex x="0" y="0" z="0"/><vertex x="1e39" y="0" z="0"/><vertex x="0" y="1e39" z="0"/>` +
+      `</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh>`;
+
+    const parsed = parse3mf(
+      coreOnly3mf({
+        unit: 'micron',
+        objects: `<object id="1" type="model">${mesh}</object>`,
+      }),
+    );
+
+    expect(sizeOf(boundsOf(parsed.positions))[0] / 1e36).toBeCloseTo(1, 5);
+  });
+
+  it('refuses a blank transform rather than treating it as identity', () => {
+    // An empty attribute is a malformed one. Reading it as identity renders the object at
+    // the origin and reports dimensions the file never claimed.
+    expect(() => parse3mf(coreOnly3mf({ items: '<item objectid="1" transform=""/>' }))).toThrow(
+      /corrupt/i,
+    );
+  });
 });

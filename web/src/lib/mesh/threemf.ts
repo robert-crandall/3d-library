@@ -145,7 +145,9 @@ type Matrix = number[]; // 12 numbers: a row-major 4x3 affine transform.
 const IDENTITY: Matrix = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
 
 function parseMatrix(value: string | null): Matrix {
-  if (!value) return IDENTITY;
+  // A blank `transform=""` is not identity, it is a malformed attribute, so only an
+  // absent one falls through to identity.
+  if (value === null) return IDENTITY;
   const numbers = value.trim().split(/\s+/).map(Number);
   if (numbers.length !== 12 || numbers.some((n) => !Number.isFinite(n))) {
     throw new Error(CORRUPT);
@@ -201,17 +203,17 @@ function nestedChildren(parent: Element, wrapper: string, name: string): Element
  * A required numeric attribute.
  *
  * `Number(null)` and `Number('')` are both 0, so an absent `z` would silently place the
- * vertex on the origin plane and an absent `v1` would resolve to a real vertex. Float32
- * is checked as well as Float64: 1e100 is finite but becomes Infinity in the buffer these
- * end up in, which reaches the camera as NaN and shows as a blank canvas.
+ * vertex on the origin plane and an absent `v1` would resolve to a real vertex.
+ *
+ * The magnitude is deliberately not checked here. A vertex is only ever seen through a
+ * transform and a unit scale, so whether it fits the Float32 buffer is not knowable until
+ * `emit` has multiplied it out.
  */
 function requiredNumber(node: Element, name: string): number {
   const raw = node.getAttribute(name);
   if (raw === null || raw.trim() === '') throw new Error(CORRUPT);
   const value = Number(raw);
-  if (!Number.isFinite(value) || !Number.isFinite(Math.fround(value))) {
-    throw new Error(CORRUPT);
-  }
+  if (!Number.isFinite(value)) throw new Error(CORRUPT);
   return value;
 }
 
@@ -305,6 +307,17 @@ export function parse3mf(buffer: ArrayBuffer): ParsedMesh {
   let triangleCount = 0;
 
   const emit = (mesh: Mesh, matrix: Matrix) => {
+    // The buffer is Float32, so a coordinate that is finite in a double can still land as
+    // Infinity - and Infinity reaches the camera as NaN, which shows as a blank canvas
+    // with no error. Vertices, transforms and the unit scale all multiply, so this is the
+    // first point at which the final magnitude is known. Checked by reading the slot back
+    // rather than by `Math.fround`, because what matters is what the buffer stores.
+    const put = (value: number) => {
+      positions[used] = value;
+      if (!Number.isFinite(positions[used])) throw new Error(CORRUPT);
+      used++;
+    };
+
     for (let t = 0; t < mesh.triangles.length; t += 3) {
       // Checked before appending, so the buffer never grows past the cap.
       if (++triangleCount > MAX_TRIANGLES) throw new Error(TOO_LARGE);
@@ -318,9 +331,9 @@ export function parse3mf(buffer: ArrayBuffer): ParsedMesh {
         const x = mesh.vertices[v];
         const y = mesh.vertices[v + 1];
         const z = mesh.vertices[v + 2];
-        positions[used++] = (x * matrix[0] + y * matrix[3] + z * matrix[6] + matrix[9]) * scale;
-        positions[used++] = (x * matrix[1] + y * matrix[4] + z * matrix[7] + matrix[10]) * scale;
-        positions[used++] = (x * matrix[2] + y * matrix[5] + z * matrix[8] + matrix[11]) * scale;
+        put((x * matrix[0] + y * matrix[3] + z * matrix[6] + matrix[9]) * scale);
+        put((x * matrix[1] + y * matrix[4] + z * matrix[7] + matrix[10]) * scale);
+        put((x * matrix[2] + y * matrix[5] + z * matrix[8] + matrix[11]) * scale);
       }
     }
   };

@@ -38,13 +38,13 @@ describe('parseStl', () => {
   });
 
   it('reads a binary file with trailing bytes', () => {
-    // The exact-length test fails here, so classification falls to the prefix.
+    // Some exporters pad past the last facet. The declared count still fits, so this is
+    // still a binary file.
     expect(sizeOfStl(binaryStl(BOX, { trailing: 64 }))).toEqual([20, 10, 5]);
   });
 
   it('reads a binary file that both starts with "solid" and has trailing bytes', () => {
-    // Neither half of the heuristic gets this right: the length does not match and the
-    // prefix says ASCII. Only the "decoded to text with no vertex line" retry saves it.
+    // The familiar "starts with solid means ASCII" rule votes the wrong way here.
     expect(
       sizeOfStl(binaryStl(BOX, { header: 'solid v1', trailing: 32 })),
     ).toEqual([20, 10, 5]);
@@ -106,11 +106,8 @@ describe('parseStl', () => {
   });
 
   it('reads a binary file whose header says "solid" and mentions vertices', () => {
-    // The 80-byte header is arbitrary text. A file that starts with "solid", happens to
-    // carry the word "vertex", and has trailing bytes defeats both halves of the
-    // heuristic: the length test fails and the prefix test votes ASCII. Before this it
-    // was reported as corrupt, and with three parseable numbers in the header it would
-    // have rendered the header instead of the facets.
+    // The 80-byte header is arbitrary text, and a file that starts with "solid" and
+    // happens to carry the word "vertex" defeats the prefix rule.
     const buffer = binaryStl(boxTriangles(3, 5, 7), {
       header: 'solid exported by a tool that writes vertex counts here',
       trailing: 6,
@@ -121,5 +118,47 @@ describe('parseStl', () => {
     expect(size[0]).toBeCloseTo(3);
     expect(size[1]).toBeCloseTo(5);
     expect(size[2]).toBeCloseTo(7);
+  });
+
+  it('reads a binary file whose header is itself a parseable ASCII triangle', () => {
+    // The worst case for any token-sniffing rule: 80 bytes that carry "solid", "facet"
+    // and three complete vertex lines, so a text read of the file succeeds and returns
+    // the header's triangle instead of the real geometry - silently, with plausible
+    // dimensions. The declared facet count is what settles it.
+    const buffer = binaryStl(boxTriangles(3, 5, 7), {
+      // Space-padded to the full 80 bytes, which is what an exporter that pads its header
+      // with spaces rather than nulls produces - and what makes the last number parseable.
+      header: 'solid facet vertex 1 2 3 vertex 4 5 6 vertex 7 8 9'.padEnd(80, ' '),
+      trailing: 6,
+    });
+
+    const size = sizeOf(boundsOf(parseStl(buffer).positions));
+
+    expect(size[0]).toBeCloseTo(3);
+    expect(size[1]).toBeCloseTo(5);
+    expect(size[2]).toBeCloseTo(7);
+  });
+
+  it('refuses an ASCII coordinate too large for the Float32 buffer', () => {
+    // 1e100 is a perfectly finite double and Infinity in a Float32Array. Left alone it
+    // reaches the camera as NaN: a blank canvas with no error, which reads as a broken
+    // viewer rather than as a broken file.
+    const text = [
+      'solid overflow',
+      'facet normal 0 0 0',
+      'outer loop',
+      'vertex 0 0 0',
+      'vertex 1e100 0 0',
+      'vertex 0 1 0',
+      'endloop',
+      'endfacet',
+      'endsolid overflow',
+      // Padding: a file under 84 bytes is refused before it is classified.
+      '# '.padEnd(80, 'x'),
+    ].join('\n');
+
+    expect(() => parseStl(new TextEncoder().encode(text).buffer as ArrayBuffer)).toThrow(
+      /corrupt or truncated/,
+    );
   });
 });

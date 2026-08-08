@@ -216,12 +216,20 @@ describe('MeshViewer', () => {
     fetchMock.mockReturnValue(new Promise((resolve) => (release = resolve)));
 
     render(MeshViewer, { modelId: 7, files: [stl] });
+    // Wait for the viewer to exist, so the mount's own setShading('solid') has already
+    // landed and the click below is provably a second, later call.
+    await waitFor(() => expect(setShading).toHaveBeenCalledWith('solid'));
     await fireEvent.click(screen.getByRole('button', { name: 'X-ray' }));
     release(ok(asciiStl(boxTriangles(1, 2, 3))));
 
     await waitFor(() => expect(show).toHaveBeenCalled());
-    expect(setShading).toHaveBeenCalledWith('xray');
-    expect(setShading.mock.invocationCallOrder[0]).toBeLessThan(
+    // The X-ray call specifically. Mount already called setShading with the default - the
+    // assertion below proves it - so an ordering claim about the *first* call is a claim
+    // about 'solid', and would hold even if X-ray never reached the viewer at all.
+    expect(setShading.mock.calls[0]).toEqual(['solid']);
+    const xray = setShading.mock.calls.findIndex(([shading]) => shading === 'xray');
+    expect(xray).toBeGreaterThan(0);
+    expect(setShading.mock.invocationCallOrder[xray]).toBeLessThan(
       show.mock.invocationCallOrder[0],
     );
   });

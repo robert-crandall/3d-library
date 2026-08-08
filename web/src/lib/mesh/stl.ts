@@ -14,29 +14,25 @@ const COUNT_BYTES = 4;
 const FACET_BYTES = 50;
 
 /**
- * Decide whether the bytes are binary or ASCII, using three.js's `STLLoader.isBinary`
- * heuristic - not because it is elegant, but because it is the one that has met real
- * files.
+ * Decide whether the bytes are binary or ASCII.
  *
- * The exact-length test is the reliable half. The "solid" prefix is the unreliable
- * half: it is only a convention for ASCII files, and plenty of binary exporters write
- * it into the 80-byte header. So a length match wins outright, and the prefix is
- * consulted only when the length does not match - which happens for ASCII files and for
- * binary files with trailing bytes.
+ * A binary STL declares its facet count at byte 80, so 84 + 50n bytes must be present.
+ * That self-consistency is the whole test. The more familiar "starts with solid" rule is
+ * deliberately not used: it is only a convention for ASCII files, plenty of binary
+ * exporters write the word into their 80-byte header, and one that also writes "facet"
+ * and three "vertex" lines there parses as a one-triangle ASCII file with the real
+ * geometry dropped.
+ *
+ * An ASCII file cannot pass this test. Byte 83 is a printable character, so the
+ * little-endian count reads as at least 0x09000000 facets - a 7 GB file, well past the
+ * 100 MB preview cap.
  */
 function looksBinary(bytes: Uint8Array): boolean {
-  if (bytes.length >= HEADER_BYTES + COUNT_BYTES) {
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const facets = view.getUint32(HEADER_BYTES, true);
-    if (HEADER_BYTES + COUNT_BYTES + FACET_BYTES * facets === bytes.length) return true;
-  }
-
-  // "solid" may be preceded by whitespace in a text file.
-  const SOLID = [0x73, 0x6f, 0x6c, 0x69, 0x64];
-  for (let offset = 0; offset < 5; offset++) {
-    if (SOLID.every((b, i) => bytes[offset + i] === b)) return false;
-  }
-  return true;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const facets = view.getUint32(HEADER_BYTES, true);
+  // Trailing bytes past the last facet are harmless and some exporters write them, so
+  // this is `<=` rather than an exact match.
+  return facets > 0 && HEADER_BYTES + COUNT_BYTES + FACET_BYTES * facets <= bytes.length;
 }
 
 function parseBinary(bytes: Uint8Array): Float32Array {
@@ -49,7 +45,6 @@ function parseBinary(bytes: Uint8Array): Float32Array {
   if (facets === 0 || HEADER_BYTES + COUNT_BYTES + FACET_BYTES * facets > bytes.length) {
     throw new Error(CORRUPT);
   }
-
   const positions = new Float32Array(facets * 9);
   let out = 0;
   for (let f = 0; f < facets; f++) {
@@ -73,7 +68,10 @@ function parseAscii(text: string): Float32Array {
   for (let m = VERTEX.exec(text); m !== null; m = VERTEX.exec(text)) {
     for (let axis = 1; axis <= 3; axis++) {
       const coordinate = Number(m[axis]);
-      if (!Number.isFinite(coordinate)) throw new Error(CORRUPT);
+      // Float32, not Float64: these end up in a Float32Array, where 1e100 is finite going
+      // in and Infinity coming out, and Infinity reaches the camera as NaN - a blank
+      // canvas with no error rather than "this file is corrupt".
+      if (!Number.isFinite(Math.fround(coordinate))) throw new Error(CORRUPT);
       coordinates.push(coordinate);
     }
   }
@@ -87,28 +85,12 @@ export function parseStl(buffer: ArrayBuffer): ParsedMesh {
   const bytes = new Uint8Array(buffer);
   if (bytes.length < HEADER_BYTES + COUNT_BYTES) throw new Error(CORRUPT);
 
-  let positions: Float32Array;
-  if (looksBinary(bytes)) {
-    positions = parseBinary(bytes);
-  } else {
-    // The heuristic cannot classify a binary file that both starts with "solid" and
-    // carries trailing bytes: the length test fails and the prefix test says ASCII. Both
-    // tokens are required rather than just "vertex", because a binary file's 80-byte
-    // header is arbitrary and may contain the word; an ASCII body always has facets too.
-    const text = new TextDecoder().decode(bytes);
-    if (/facet\s/.test(text) && /vertex\s/.test(text)) {
-      try {
-        positions = parseAscii(text);
-      } catch {
-        // A binary file carrying both words in its header lands here. Its facets are the
-        // real geometry, so prefer them; a genuinely truncated ASCII file has no plausible
-        // facet count at byte 80 either, and still ends up reported as corrupt.
-        positions = parseBinary(bytes);
-      }
-    } else {
-      positions = parseBinary(bytes);
-    }
-  }
+  // Anything that is not a self-consistent binary file is read as text, so a binary file
+  // truncated mid-download finds no vertices and is reported as corrupt rather than
+  // rendering as an empty scene.
+  const positions = looksBinary(bytes)
+    ? parseBinary(bytes)
+    : parseAscii(new TextDecoder().decode(bytes));
 
   // An STL has no unit field. Millimetres is universal in 3D printing - every slicer
   // assumes it - so the numbers are taken as millimetres unchanged.

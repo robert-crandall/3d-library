@@ -167,10 +167,13 @@ export function createViewer(canvas: HTMLCanvasElement): Viewer {
       controls.dispose();
       mesh?.geometry.dispose();
       for (const material of Object.values(materials)) material.dispose();
-      // Frees the GL context. Browsers cap the number of live contexts (~16), so a page
-      // that mounts and unmounts the viewer without this eventually loses the oldest one
-      // and renders nothing.
+      // Browsers cap the number of live GL contexts (~16) and drop the oldest when a new
+      // one exceeds it. `dispose()` frees the renderer's own resources but leaves the
+      // context alive until it is collected, so a user who opens sixteen models in one SPA
+      // session can knock out the viewer they are looking at; `forceContextLoss` hands it
+      // back now.
       renderer.dispose();
+      renderer.forceContextLoss();
     },
   };
 }
