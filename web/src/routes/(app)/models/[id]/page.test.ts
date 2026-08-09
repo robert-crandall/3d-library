@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ModelPage from './+page.svelte';
 import { load } from './+page';
+import { library } from '$lib/library.svelte';
 import { coreOnly3mf } from '$lib/mesh/fixtures';
 
 const get = vi.fn();
@@ -9,9 +10,20 @@ const put = vi.fn();
 const del = vi.fn();
 const goto = vi.fn();
 
+// The shared taxonomy store uses this same client, and most writes on this page
+// end with a `library.refresh()`. Its endpoints answer for themselves here, so a
+// test can say what `/api/models…` returns without that answer also having to be
+// a plausible category list - which is what a bare `get` would hand the store.
+const STORE_LISTS = ['/api/categories', '/api/tags', '/api/materials', '/api/collections'];
 vi.mock('$lib/api/client', () => ({
   api: {
-    GET: (...args: unknown[]) => get(...args),
+    GET: (...args: unknown[]) => {
+      const path = String(args[0]);
+      if (STORE_LISTS.includes(path)) return Promise.resolve({ data: [] });
+      if (path === '/api/library/counts')
+        return Promise.resolve({ data: { models: 0, uncategorized: 0 } });
+      return get(...args);
+    },
     PUT: (...args: unknown[]) => put(...args),
     DELETE: (...args: unknown[]) => del(...args)
   }
@@ -47,6 +59,7 @@ const model = {
   files: [file],
   tags: [],
   materials: [],
+  collections: [],
   // A model that is nobody's version and has none: its family is just itself,
   // which is the case that shows no Versions panel.
   family: [
@@ -392,6 +405,8 @@ describe('model detail page', () => {
   it('confirms before deleting the model, then leaves for the library', async () => {
     get.mockResolvedValue({ data: model });
     del.mockResolvedValue({ data: undefined });
+    // Unloaded, so a refresh is the only thing that can flip it.
+    library.reset();
     render(ModelPage, { data });
 
     await screen.findByRole('heading', { name: 'Filament Dry Box' });
@@ -403,6 +418,11 @@ describe('model detail page', () => {
 
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Delete model' }));
     await waitFor(() => expect(goto).toHaveBeenCalledWith('/'));
+    // Every count in the sidebar just went down by one, and the layout that
+    // read them does not remount on a client-side navigation, so leaving
+    // without a refresh leaves the user looking at numbers that count a model
+    // they have just deleted.
+    await waitFor(() => expect(library.loaded).toBe(true));
   });
 
   it('stays on the page when deleting the model fails', async () => {
@@ -1042,5 +1062,135 @@ describe('model detail taxonomy', () => {
 
     releaseDelete({ data: undefined });
     await waitFor(() => expect(goto).toHaveBeenCalledWith('/'));
+  });
+});
+
+// Membership is the one write on this page aimed at something other than the
+// model's own columns, and the only one whose success has to be read back
+// rather than applied locally.
+describe('model detail collections', () => {
+  /** A store with two collections, one of which this model is already in. */
+  function withCollections() {
+    library.reset();
+    library.collections = [
+      { id: 12, name: 'Dry box build', description: '', modelCount: 4 },
+      { id: 13, name: 'Gifts 2026', description: '', modelCount: 0 }
+    ];
+  }
+
+  it('adds by PUT and re-reads the model', async () => {
+    withCollections();
+    get.mockResolvedValue({ data: model });
+    put.mockResolvedValue({ data: undefined });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    const reads = modelReads();
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Add to' }), {
+      target: { value: '12' }
+    });
+
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith('/api/models/{id}/collections/{collectionId}', {
+        params: { path: { id: 7, collectionId: 12 } }
+      })
+    );
+    // Re-read rather than patched here: the server owns membership, and the
+    // panel's chips come from the model it sends back.
+    await waitFor(() => expect(modelReads()).toBe(reads + 1));
+  });
+
+  it('removes by DELETE for the membership that was clicked', async () => {
+    withCollections();
+    get.mockResolvedValue({
+      data: { ...model, collections: [{ id: 12, name: 'Dry box build' }] }
+    });
+    del.mockResolvedValue({ data: undefined });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove from Dry box build' }));
+
+    await waitFor(() =>
+      expect(del).toHaveBeenCalledWith('/api/models/{id}/collections/{collectionId}', {
+        params: { path: { id: 7, collectionId: 12 } }
+      })
+    );
+  });
+
+  it('reports a refusal without taking the model off screen', async () => {
+    withCollections();
+    get.mockResolvedValue({ data: model });
+    put.mockResolvedValue({
+      error: { title: 'Not Found', errors: [{ message: 'collection not found' }] }
+    });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    const reads = modelReads();
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Add to' }), {
+      target: { value: '12' }
+    });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('collection not found');
+    // A refused add is not a change, so there is nothing to re-read.
+    expect(modelReads()).toBe(reads);
+  });
+
+  it('ignores an add that answers after the id changed', async () => {
+    withCollections();
+    get.mockResolvedValue({ data: withVersions });
+    let release: (value: unknown) => void = () => {};
+    put.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    const view = render(ModelPage, { data: { id: 7 } });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Add to' }), {
+      target: { value: '12' }
+    });
+
+    get.mockResolvedValue({ data: asVersion });
+    await view.rerender({ data: { id: 9 } });
+    await screen.findByRole('heading', { name: 'Bracket v1' });
+    const reads = modelReads();
+
+    release({ data: undefined });
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The panel links between family members without unmounting this page, so
+    // the answer to a click on model 7 can land while model 9 is on screen.
+    // Re-reading here would paint 7's collections under 9's heading.
+    expect(modelReads()).toBe(reads);
+    expect(screen.getByRole('heading', { name: 'Bracket v1' })).toBeTruthy();
+    // The write still landed, so a collection's count still moved. Skipping the
+    // store refresh because the user walked away leaves the sidebar showing a
+    // number the database disagrees with, and nothing on this page will correct
+    // it. `withCollections` leaves the store unloaded, so a refresh is the only
+    // thing that can have set this.
+    expect(library.loaded).toBe(true);
+  });
+
+  it('does not put a stale refusal on the new model', async () => {
+    withCollections();
+    get.mockResolvedValue({ data: withVersions });
+    let release: (value: unknown) => void = () => {};
+    put.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    const view = render(ModelPage, { data: { id: 7 } });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Add to' }), {
+      target: { value: '12' }
+    });
+
+    get.mockResolvedValue({ data: asVersion });
+    await view.rerender({ data: { id: 9 } });
+    await screen.findByRole('heading', { name: 'Bracket v1' });
+
+    release({ error: { title: 'Not Found', errors: [{ message: 'collection not found' }] } });
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The refusal answers the model that was left. Surfacing it here would
+    // report it against a model it never described.
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

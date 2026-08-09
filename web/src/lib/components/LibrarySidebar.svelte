@@ -15,13 +15,13 @@
   const onLibrary = $derived(page.url.pathname === '/');
   const view = $derived(onLibrary ? parseView(page.url.searchParams) : EMPTY_VIEW);
   const unfiltered = $derived(
-    onLibrary && !view.categoryId && !view.tagId && !view.uncategorized
+    onLibrary && !view.categoryId && !view.tagId && !view.collectionId && !view.uncategorized
   );
 
   /** A link that keeps the other axis, and keeps the search and the ordering.
    *  Clicking a tag while a category is selected narrows to both, which is what
    *  the server's AND does; clicking the selected one clears just that axis. */
-  function href(key: 'categoryId' | 'tagId' | 'uncategorized', value: string) {
+  function href(key: 'categoryId' | 'tagId' | 'collectionId' | 'uncategorized', value: string) {
     if (key === 'uncategorized') {
       // Uncategorized and a category are mutually exclusive: together they
       // match nothing, and offering the user an always-empty grid is not a
@@ -76,11 +76,8 @@
 </script>
 
 <!--
-  The signed-in sidebar: search, navigation, the category list, the tag list,
-  and a way into Settings.
-
-  Collections from screen 1a are absent - they are a later milestone - because a
-  control that does nothing is worse than one that is not there yet.
+  The signed-in sidebar: search, navigation, the category list, the collection
+  list, the tag list, and a way into Settings.
 -->
 <aside class="flex w-62 shrink-0 flex-col border-r border-line bg-sidebar">
   <div class="flex items-center gap-2 px-5 py-5">
@@ -154,6 +151,31 @@
             ></span>
             <span class="truncate">{category.name}</span>
             <span class="ml-auto shrink-0 text-faint">{category.modelCount}</span>
+          </a>
+        {/each}
+      </nav>
+    {/if}
+
+    <!-- Collections sit between Categories and Tags, as screen 1a draws them.
+         A row is a name and a count, and the count is over root models like
+         every other count here. Hidden when there are none, like the two lists
+         either side: an empty heading is a control that does nothing. -->
+    {#if library.collections.length > 0}
+      <nav aria-label="Collections">
+        <h2 class="px-3 pb-1.5 text-xs font-medium tracking-wide text-faint uppercase">
+          Collections
+        </h2>
+        {#each library.collections as collection (collection.id)}
+          {@const selected = view.collectionId === String(collection.id)}
+          <a
+            href={href('collectionId', String(collection.id))}
+            aria-current={selected ? 'page' : undefined}
+            class="flex items-center gap-2 rounded px-3 py-1.5 text-sm"
+            class:bg-selected={selected}
+            class:font-medium={selected}
+          >
+            <span class="truncate">{collection.name}</span>
+            <span class="ml-auto shrink-0 text-faint">{collection.modelCount}</span>
           </a>
         {/each}
       </nav>

@@ -34,6 +34,7 @@ func Register(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	registerSetThumbnail(api, svc, currentUser)
 	registerSetParent(api, svc, currentUser)
 	registerTaxonomy(api, svc, currentUser)
+	registerCollections(api, svc, currentUser)
 }
 
 // uploadInput carries the streaming multipart reader from the resolver to the
@@ -282,6 +283,7 @@ type modelsOutput struct {
 type listInput struct {
 	CategoryID    int64  `query:"categoryId" minimum:"1" doc:"Only models in this category"`
 	TagID         int64  `query:"tagId" minimum:"1" doc:"Only models carrying this tag"`
+	CollectionID  int64  `query:"collectionId" minimum:"1" doc:"Only models in this collection"`
 	Uncategorized bool   `query:"uncategorized" doc:"Only models with no category"`
 	Q             string `query:"q" maxLength:"100" doc:"Only models whose name or description contains every word of this"`
 	Sort          string `query:"sort" enum:"newest,oldest,name,name-desc" doc:"Ordering. Defaults to newest."`
@@ -293,11 +295,15 @@ func registerList(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 		OperationID: "list-models",
 		Summary:     "List models",
 		Description: "One page of the caller's library, newest first. The " +
-			"optional filters and search narrow it and combine with AND.",
+			"optional filters and search narrow it and combine with AND. A " +
+			"collectionId that is not the caller's is a 404, unlike the " +
+			"other filters: it is the only place another user's collection " +
+			"can be refused, and an empty collection has to be " +
+			"distinguishable from one that does not exist.",
 		Method:   http.MethodGet,
 		Path:     "/api/models",
 		Tags:     []string{"library"},
-		Errors:   []int{http.StatusUnauthorized, http.StatusUnprocessableEntity},
+		Errors:   []int{http.StatusUnauthorized, http.StatusNotFound, http.StatusUnprocessableEntity},
 		Security: apisec.User(api),
 	}, func(ctx context.Context, in *listInput) (*modelsOutput, error) {
 		userID, err := currentUser(ctx)
@@ -316,7 +322,13 @@ func registerList(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 		if in.TagID != 0 {
 			f.TagID = &in.TagID
 		}
+		if in.CollectionID != 0 {
+			f.CollectionID = &in.CollectionID
+		}
 		page, err := svc.List(ctx, userID, f)
+		if errors.Is(err, ErrNotFound) {
+			return nil, huma.Error404NotFound("collection not found")
+		}
 		if err != nil {
 			return nil, internalError("could not read the library", err)
 		}

@@ -18,6 +18,7 @@ export type View = {
   page: number;
   categoryId: string | null;
   tagId: string | null;
+  collectionId: string | null;
   uncategorized: boolean;
 };
 
@@ -27,6 +28,7 @@ export const EMPTY_VIEW: View = {
   page: 1,
   categoryId: null,
   tagId: null,
+  collectionId: null,
   uncategorized: false
 };
 
@@ -53,6 +55,7 @@ export function parseView(params: URLSearchParams): View {
       : 1,
     categoryId: id(params.get('categoryId')),
     tagId: id(params.get('tagId')),
+    collectionId: id(params.get('collectionId')),
     uncategorized: params.get('uncategorized') === 'true'
   };
 }
@@ -72,6 +75,7 @@ function search(view: View): string {
   const params = new URLSearchParams();
   if (view.categoryId) params.set('categoryId', view.categoryId);
   if (view.tagId) params.set('tagId', view.tagId);
+  if (view.collectionId) params.set('collectionId', view.collectionId);
   if (view.uncategorized) params.set('uncategorized', 'true');
   if (view.q) params.set('q', view.q);
   if (view.sort !== 'newest') params.set('sort', view.sort);
@@ -104,7 +108,12 @@ export function withFilter(view: View, change: Partial<View>): View {
 
 /** Clears every filter axis, keeping the search and the ordering. */
 export function withoutFilters(view: View): View {
-  return withFilter(view, { categoryId: null, tagId: null, uncategorized: false });
+  return withFilter(view, {
+    categoryId: null,
+    tagId: null,
+    collectionId: null,
+    uncategorized: false
+  });
 }
 
 /** How many pages a result set of this size fills. Never zero. */

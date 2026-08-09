@@ -1,6 +1,7 @@
 <script lang="ts">
   import LibraryError from '$lib/components/LibraryError.svelte';
   import TaxonomySection from '$lib/components/TaxonomySection.svelte';
+  import CollectionsSection from '$lib/components/CollectionsSection.svelte';
   import { library } from '$lib/library.svelte';
 
   // A fixed palette, not a colour picker. The sidebar's dots are 8px, so the
@@ -22,7 +23,7 @@
 <div class="mx-auto max-w-3xl px-8 py-7">
   <header>
     <p class="text-xs font-medium tracking-wide text-faint uppercase">Settings</p>
-    <h1 class="mt-1 text-2xl font-semibold">Categories, tags and materials</h1>
+    <h1 class="mt-1 text-2xl font-semibold">Collections, categories, tags and materials</h1>
     <p class="mt-2 text-sm text-muted">
       The vocabulary this library is filed under. Every name is yours alone, and every one of these
       deletes is permanent.
@@ -44,6 +45,8 @@
           ? 'This category has no models in it.'
           : `${row.modelCount} ${row.modelCount === 1 ? 'model becomes' : 'models become'} uncategorized. The ${row.modelCount === 1 ? 'model itself is' : 'models themselves are'} not deleted.`}
     />
+
+    <CollectionsSection />
 
     <TaxonomySection
       title="Tags"

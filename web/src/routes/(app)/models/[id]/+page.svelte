@@ -7,6 +7,7 @@
   import UploadDialog from '$lib/components/UploadDialog.svelte';
   import AttachVersionDialog from '$lib/components/AttachVersionDialog.svelte';
   import VersionsPanel from '$lib/components/VersionsPanel.svelte';
+  import CollectionsPanel from '$lib/components/CollectionsPanel.svelte';
   import SliceSettings from '$lib/components/SliceSettings.svelte';
   import FilePreviewPanel from '$lib/components/FilePreviewPanel.svelte';
   import { hasPreview } from '$lib/preview';
@@ -51,6 +52,11 @@
   // table row with no dialog around it, and it must not disable the dialog
   // buttons while it runs.
   let pinning = $state(false);
+  // Membership is the other write with no dialog around it, so like a pin it
+  // needs somewhere of its own to be refused: `dialogError` is only rendered
+  // inside a dialog, and putting a 404 there would make it invisible now and
+  // surface it in the next dialog opened.
+  let membershipError = $state('');
 
   // Every mutation on this page is a button, so disabling them all while any
   // one is in flight is the whole of the concurrency story. Without it a pin
@@ -153,6 +159,7 @@
     detaching = undefined;
     deletingFile = undefined;
     dialogError = '';
+    membershipError = '';
     load(id);
   });
 
@@ -316,6 +323,45 @@
     }
   }
 
+  /**
+   * Put this model in a collection, or take it out.
+   *
+   * Both re-read the model afterwards rather than editing `model.collections`
+   * here: the server owns membership, and the two calls are the same shape, so
+   * one function is one place for the guard and the refresh.
+   */
+  async function setMembership(collectionId: number, member: boolean) {
+    const id = data.id;
+    busy = true;
+    membershipError = '';
+    try {
+      const call = member ? api.PUT : api.DELETE;
+      const { error: failure } = await call('/api/models/{id}/collections/{collectionId}', {
+        params: { path: { id, collectionId } }
+      });
+      if (failure) {
+        if (stale(id)) return;
+        membershipError = apiErrorMessage(
+          failure,
+          member ? 'Could not add this model to that collection.' : 'Could not remove this model.'
+        );
+        return;
+      }
+      // A collection's count moved, so the sidebar is out of date - and it is
+      // out of date whether or not the user is still looking at this model, so
+      // this refresh comes before the staleness guard. Only the re-read of the
+      // model itself is the stale one.
+      library.refresh();
+      if (stale(id)) return;
+      await load(id);
+    } catch {
+      if (stale(id)) return;
+      membershipError = 'Could not reach the server.';
+    } finally {
+      busy = false;
+    }
+  }
+
   async function deleteModel() {
     busy = true;
     dialogError = '';
@@ -327,6 +373,12 @@
         dialogError = apiErrorMessage(failure, 'Could not delete this model.');
         return;
       }
+      // The library's counts include this model, and the layout that loaded
+      // them does not remount on a client-side navigation, so the sidebar would
+      // otherwise keep counting a model that no longer exists. This is not
+      // specific to collections - the category and tag counts were wrong here
+      // too - but collections made it one more number to get wrong.
+      library.refresh();
       // Nothing left to show. The library re-reads on mount, so it will not be
       // in the grid either.
       await goto('/');
@@ -604,6 +656,16 @@
             ondetach={(member) => ((dialogError = ''), (detaching = member))}
           />
         {/if}
+
+        <CollectionsPanel
+          memberships={model.collections}
+          all={library.collections}
+          loaded={library.loaded}
+          error={membershipError}
+          {mutating}
+          onadd={(collectionId) => setMembership(collectionId, true)}
+          onremove={(collection) => setMembership(collection.id, false)}
+        />
 
         {#if model.description}
           <section class="rounded-tile border border-line bg-surface px-4 py-3">

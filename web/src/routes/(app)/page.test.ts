@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import LibraryPage from './+page.svelte';
 import { nav } from '$lib/testing/nav.svelte';
+import { library } from '$lib/library.svelte';
 
 const get = vi.fn();
 vi.mock('$lib/api/client', () => ({ api: { GET: (...args: unknown[]) => get(...args) } }));
@@ -335,6 +336,96 @@ describe('library page filtering', () => {
 
     expect(await screen.findByRole('heading', { name: 'All models' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Clear filter' })).toBeNull();
+  });
+});
+
+// A collection is the one filter whose name and description come from the
+// shared store rather than the URL, so it is the one whose heading can be late,
+// wrong, or never arrive at all.
+describe('library page, collections', () => {
+  beforeEach(() => {
+    nav.url = new URL('http://localhost/');
+    library.reset();
+    goto.mockClear();
+  });
+
+  it('names the collection over the other filters, and shows its description', async () => {
+    nav.url = new URL('http://localhost/?collectionId=12&categoryId=3&q=box');
+    library.collections = [
+      { id: 12, name: 'Dry box build', description: 'Every part of it.', modelCount: 4 }
+    ];
+    library.categories = [{ id: 3, name: 'Functional', color: '#3b82f6', modelCount: 12 }];
+    get.mockImplementation(answers([model]));
+    render(LibraryPage);
+
+    // The collection wins: filing a build's parts together is why the view
+    // exists, and "Functional" would name the least interesting half of it.
+    expect(await screen.findByRole('heading', { name: 'Dry box build' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Functional' })).toBeNull();
+    // The description is the collection's alone - no other filter has one.
+    expect(screen.getByText('Every part of it.')).toBeTruthy();
+  });
+
+  it('shows no heading at all while the collection is unknown', async () => {
+    nav.url = new URL('http://localhost/?collectionId=12');
+    // The store is empty and stays empty: the layout fires its refresh without
+    // awaiting it, and it is allowed to fail outright.
+    get.mockImplementation(answers([model]));
+    render(LibraryPage);
+
+    // The tile arrives, so the page has rendered - and there is still no
+    // heading. "All models" here would not be merely late, it would be a lie
+    // about which models are underneath it, and it would never correct itself.
+    expect(await screen.findByRole('heading', { name: 'Benchy' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'All models' })).toBeNull();
+    // Not an empty one either. A nameless h1 is still a heading landmark, and a
+    // screen reader announces it as "heading level 1" with nothing after it.
+    expect(screen.queryAllByRole('heading', { level: 1 })).toEqual([]);
+
+    // And it appears the moment the store answers.
+    library.collections = [
+      { id: 12, name: 'Dry box build', description: '', modelCount: 4 }
+    ];
+    expect(await screen.findByRole('heading', { name: 'Dry box build' })).toBeTruthy();
+  });
+
+  it('says an empty collection is empty, but only when it is the whole filter', async () => {
+    nav.url = new URL('http://localhost/?collectionId=12');
+    library.collections = [
+      { id: 12, name: 'Dry box build', description: '', modelCount: 0 }
+    ];
+    get.mockImplementation(answers([]));
+    render(LibraryPage);
+
+    // Not "nothing matches this filter": an empty collection is one you have
+    // not filled in yet, so it says how to fill it.
+    expect(await screen.findByRole('heading', { name: 'This collection is empty' })).toBeTruthy();
+
+    // With a search on top, nothing matching really is nothing matching, and
+    // the search state names the term - which the collection state cannot.
+    nav.url = new URL('http://localhost/?collectionId=12&q=lid');
+    expect(await screen.findByRole('heading', { name: 'No models match “lid”' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'This collection is empty' })).toBeNull();
+
+    // Same with a second filter, which has its own way out.
+    nav.url = new URL('http://localhost/?collectionId=12&uncategorized=true');
+    expect(await screen.findByRole('heading', { name: 'Nothing matches this filter' })).toBeTruthy();
+  });
+
+  it('clears the collection along with every other axis', async () => {
+    nav.url = new URL('http://localhost/?collectionId=12&categoryId=3&sort=name');
+    library.collections = [
+      { id: 12, name: 'Dry box build', description: '', modelCount: 4 }
+    ];
+    get.mockImplementation(answers([model]));
+    render(LibraryPage);
+
+    await screen.findByRole('heading', { name: 'Dry box build' });
+    // The ordering survives; the filters do not. A "Clear filter" that leaves
+    // the collection on is a button that does not do what it says.
+    expect(screen.getByRole('link', { name: 'Clear filter' }).getAttribute('href')).toBe(
+      '/?sort=name'
+    );
   });
 });
 
