@@ -1427,13 +1427,36 @@ func (s *Service) SetParent(ctx context.Context, userID, modelID int64, parentID
 		return fmt.Errorf("%w: a model cannot be a version of itself", errInvalid)
 	}
 
+	// A transaction, so the two rows this touches can be locked up front and in
+	// lockModels' order. Without that the UPDATE below locks the child and
+	// *then* the foreign key takes KEY SHARE on the parent, which is backwards
+	// from a bulk delete over both of them, and one of the two gets aborted.
+	//
+	// Sorting by id is not enough on its own: reparenting version C from root P
+	// to root Q, where C sorts below Q, is C-then-Q, while a bulk delete of
+	// [P, Q] holds both roots and then waits for C. lockModels puts roots before
+	// versions for exactly that case.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("library: begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	lock := []int64{modelID}
+	if parentID != nil {
+		lock = append(lock, *parentID)
+	}
+	if err := lockModels(ctx, tx, userID, lock); err != nil {
+		return err
+	}
+
 	if parentID != nil {
 		// Both rows in one query, so a missing model and a missing parent are
 		// one round trip and one 404. hasVersions is only meaningful for the
 		// model being moved: a parent that already has versions is exactly the
 		// case this feature is for.
 		var modelHasVersions, parentIsVersion bool
-		err := s.db.QueryRow(ctx,
+		err := tx.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM models WHERE parent_id = m.id),
 			        p.parent_id IS NOT NULL
 			   FROM models m JOIN models p ON p.id = $3 AND p.user_id = $2
@@ -1453,7 +1476,7 @@ func (s *Service) SetParent(ctx context.Context, userID, modelID int64, parentID
 		}
 	}
 
-	tag, err := s.db.Exec(ctx,
+	tag, err := tx.Exec(ctx,
 		`UPDATE models SET parent_id = $3 WHERE id = $1 AND user_id = $2`,
 		modelID, userID, parentID)
 	// 23503 is the foreign key refusing what the checks above did not catch -
@@ -1468,6 +1491,10 @@ func (s *Service) SetParent(ctx context.Context, userID, modelID int64, parentID
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("library: commit: %w", err)
 	}
 	return nil
 }

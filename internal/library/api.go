@@ -35,6 +35,7 @@ func Register(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	registerSetParent(api, svc, currentUser)
 	registerTaxonomy(api, svc, currentUser)
 	registerCollections(api, svc, currentUser)
+	registerBulk(api, svc, currentUser)
 }
 
 // uploadInput carries the streaming multipart reader from the resolver to the
@@ -701,14 +702,21 @@ func registerSetParent(api huma.API, svc *Service, currentUser CurrentUserFunc) 
 		Path:          "/api/models/{id}/parent",
 		Tags:          []string{"library"},
 		DefaultStatus: http.StatusNoContent,
-		Errors:        []int{http.StatusUnauthorized, http.StatusNotFound, http.StatusUnprocessableEntity},
-		Security:      apisec.User(api),
+		Errors: []int{http.StatusUnauthorized, http.StatusNotFound,
+			http.StatusConflict, http.StatusUnprocessableEntity},
+		Security: apisec.User(api),
 	}, func(ctx context.Context, in *setParentInput) (*struct{}, error) {
 		userID, err := currentUser(ctx)
 		if err != nil {
 			return nil, huma.Error401Unauthorized("authentication required")
 		}
 		err = svc.SetParent(ctx, userID, in.ID, in.Body.ParentID)
+		// The models are locked in two statements, so one of them can stop being
+		// a root between them; lockModels refuses rather than write a row it does
+		// not hold. Nothing happened, so the answer is to ask again.
+		if errors.Is(err, ErrChanged) {
+			return nil, huma.Error409Conflict("that model changed while this was being applied; try again")
+		}
 		if errors.Is(err, ErrNotFound) {
 			return nil, huma.Error404NotFound("model not found")
 		}
