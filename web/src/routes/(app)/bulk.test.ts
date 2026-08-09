@@ -68,6 +68,7 @@ async function pick(name: string, init: MouseEventInit = { ctrlKey: true }) {
 describe('library page bulk actions', () => {
   beforeEach(() => {
     nav.url = new URL('http://localhost/');
+    get.mockReset();
     get.mockImplementation(answers());
     library.reset();
     library.tags = tags;
