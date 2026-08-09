@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ModelPage from './+page.svelte';
 import { load } from './+page';
@@ -46,10 +46,63 @@ const model = {
   sourceUrl: '',
   files: [file],
   tags: [],
-  materials: []
+  materials: [],
+  // A model that is nobody's version and has none: its family is just itself,
+  // which is the case that shows no Versions panel.
+  family: [
+    {
+      id: 7,
+      name: 'Filament Dry Box',
+      description: '',
+      fileCount: 1,
+      createdAt: '2026-03-12T09:00:00Z'
+    }
+  ]
 };
 
 const data = { id: 7 };
+
+/** A list-endpoint element, for the attach picker's own read. */
+const listed = {
+  id: 9,
+  name: 'Bracket v1',
+  fileCount: 2,
+  totalSize: 2048,
+  createdAt: '2026-02-19T09:00:00Z'
+};
+
+const v1 = {
+  id: 9,
+  name: 'Bracket v1',
+  description: 'From Printables.',
+  fileCount: 2,
+  createdAt: '2026-02-19T09:00:00Z'
+};
+const v2 = {
+  id: 8,
+  name: 'Bracket v2',
+  description: '',
+  fileCount: 3,
+  createdAt: '2026-02-28T09:00:00Z'
+};
+
+/** The root of a family of three: itself plus two versions, six files between
+ *  them where its own header only ever says one. */
+const withVersions = {
+  ...model,
+  family: [{ ...model.family[0] }, v2, v1]
+};
+
+/** The same family seen from one of its versions. Its `parentId` is what makes
+ *  it a version rather than a root. */
+const asVersion = {
+  ...model,
+  id: 9,
+  name: 'Bracket v1',
+  parentId: 7,
+  fileCount: 2,
+  family: [{ ...model.family[0] }, v2, v1]
+};
 
 /** The page reads the model; the shared taxonomy store reads categories, tags,
  *  materials and counts through the same mock. Counting only the model reads
@@ -632,5 +685,327 @@ describe('model detail taxonomy', () => {
     expect(put.mock.calls[0][1].body.categoryId).toBe(3);
     expect(put.mock.calls[0][1].body.tagIds).toEqual([8]);
     expect(put.mock.calls[0][1].body.materialIds).toEqual([2]);
+  });
+  // AC 1: a model with no versions shows no panel at all. An empty "Versions"
+  // heading reads as a feature that is broken rather than one you are not using.
+  it('shows no versions panel for a model with no versions', async () => {
+    get.mockResolvedValue({ data: model });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    expect(screen.queryByRole('heading', { name: 'Versions' })).toBeNull();
+  });
+
+  // AC 1 and AC 3: the panel is the same panel from either page, so it is there
+  // to switch back with.
+  it('shows the versions panel on the root and on a version', async () => {
+    get.mockResolvedValue({ data: withVersions });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    expect(screen.getByRole('heading', { name: 'Versions' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /v1/ }).getAttribute('href')).toBe('/models/9');
+
+    cleanup();
+    get.mockResolvedValue({ data: asVersion });
+    render(ModelPage, { data: { id: 9 } });
+
+    await screen.findByRole('heading', { name: 'Bracket v1' });
+    expect(screen.getByRole('heading', { name: 'Versions' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Filament Dry Box/ }).getAttribute('href')).toBe(
+      '/models/7'
+    );
+  });
+
+  // A version cannot have versions - the server refuses the chain - so a button
+  // that can only ever be refused is worse than no button.
+  it('offers Add version on a root and not on a version', async () => {
+    get.mockResolvedValue({ data: model });
+    render(ModelPage, { data });
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    expect(screen.getByRole('button', { name: 'Add version' })).toBeTruthy();
+
+    cleanup();
+    get.mockResolvedValue({ data: asVersion });
+    render(ModelPage, { data: { id: 9 } });
+    await screen.findByRole('heading', { name: 'Bracket v1' });
+    expect(screen.queryByRole('button', { name: 'Add version' })).toBeNull();
+  });
+
+  // AC 2: attaching writes the *child's* parent, not the parent's children -
+  // sending the parent's id in the path would file the model you are looking at
+  // under the one you picked, which is backwards.
+  it('attaches the picked model as a version of this one', async () => {
+    // The picker reads the list through the same mock, so the two reads are
+    // told apart by path rather than by call order.
+    get.mockImplementation(async (path: string) =>
+      String(path) === '/api/models'
+        ? { data: { items: [{ ...listed, id: 9, name: 'Bracket v1' }], total: 1, page: 1, pageSize: 24 } }
+        : { data: model }
+    );
+    put.mockResolvedValue({});
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add version' }));
+    await waitFor(() => expect(screen.getByLabelText(/Bracket v1/)).toBeTruthy());
+    await fireEvent.click(screen.getByLabelText(/Bracket v1/));
+    await fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Add version' })
+    );
+
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    expect(put.mock.calls[0][0]).toBe('/api/models/{id}/parent');
+    expect(put.mock.calls[0][1].params.path.id).toBe(9);
+    expect(put.mock.calls[0][1].body).toEqual({ parentId: 7 });
+  });
+
+  // AC 4: detach is the same write with a null, and it has to name the version
+  // being detached rather than the page you are on.
+  it('detaches a version by nulling its parent', async () => {
+    get.mockResolvedValue({ data: withVersions });
+    put.mockResolvedValue({});
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    // Every version row has one; the last is v1, the oldest.
+    const buttons = screen.getAllByRole('button', { name: 'Detach' });
+    await fireEvent.click(buttons[buttons.length - 1]);
+    expect(screen.getByText(/goes back to the library/).textContent).toContain('Bracket v1');
+    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Detach' }));
+
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    expect(put.mock.calls[0][1].params.path.id).toBe(9);
+    expect(put.mock.calls[0][1].body).toEqual({ parentId: null });
+  });
+
+  // AC 5: the refusal has to be readable and has to change nothing. The dialog
+  // stays open because the next thing the user does is pick something else.
+  it('reports a refused attach without closing the picker', async () => {
+    get.mockImplementation(async (path: string) =>
+      String(path) === '/api/models'
+        ? { data: { items: [{ ...listed, id: 9, name: 'Bracket v1' }], total: 1, page: 1, pageSize: 24 } }
+        : { data: model }
+    );
+    put.mockResolvedValue({
+      error: { detail: 'That model has versions of its own.' },
+      response: { status: 422 }
+    });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add version' }));
+    await waitFor(() => expect(screen.getByLabelText(/Bracket v1/)).toBeTruthy());
+    await fireEvent.click(screen.getByLabelText(/Bracket v1/));
+    await fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Add version' })
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('versions of its own')
+    );
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  // AC 6: the header says "1 file" and the delete takes four. The versions'
+  // files are the ones the user cannot see from this page, so the confirmation
+  // is the only place they are ever named.
+  it('counts the versions and all their files in the delete confirmation', async () => {
+    get.mockResolvedValue({ data: withVersions });
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const body = screen.getByText(/cannot be undone/).textContent ?? '';
+    expect(body).toContain('2 versions');
+    expect(body).toContain('6 files');
+  });
+
+  // A version's own delete takes only its own files - counting the family there
+  // would say a delete is four times bigger than it is.
+  it('counts only its own files when deleting a version', async () => {
+    get.mockResolvedValue({ data: asVersion });
+    render(ModelPage, { data: { id: 9 } });
+
+    await screen.findByRole('heading', { name: 'Bracket v1' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const body = screen.getByText(/cannot be undone/).textContent ?? '';
+    expect(body).toContain('2 files');
+    expect(body).not.toContain('version');
+  });
+
+  // Clicking a version in the panel changes `data.id` without unmounting this
+  // page - same route, different param. A one-shot load at setup would leave
+  // the previous model on screen under the new URL.
+  it('re-reads the model when the id changes', async () => {
+    get.mockResolvedValue({ data: withVersions });
+    const view = render(ModelPage, { data: { id: 7 } });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    get.mockResolvedValue({ data: asVersion });
+    await view.rerender({ data: { id: 9 } });
+
+    expect(await screen.findByRole('heading', { name: 'Bracket v1' })).toBeTruthy();
+    expect(get.mock.calls.at(-1)?.[1].params.path.id).toBe(9);
+  });
+
+  // The dialogs are page state and the page is reused across a version click,
+  // so without this the delete confirmation survives the navigation still
+  // counting the model that was left - and then deletes the one that arrived.
+  it('closes an open dialog when the id changes', async () => {
+    get.mockResolvedValue({ data: withVersions });
+    const view = render(ModelPage, { data: { id: 7 } });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(screen.getByRole('dialog').textContent).toContain('2 versions');
+
+    get.mockResolvedValue({ data: asVersion });
+    await view.rerender({ data: { id: 9 } });
+
+    await screen.findByRole('heading', { name: 'Bracket v1' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  // Pin a thumbnail, then click a version before the pin answers. The response
+  // is the model that was left, and assigning it would show that model's name
+  // and files under this one's URL.
+  it('ignores a pin that answers after the id changed', async () => {
+    // Two files that can both carry a thumbnail, which is what puts a
+    // "Use as thumbnail" button on the row that is not the current pick.
+    const pinnable = {
+      ...withVersions,
+      fileCount: 2,
+      thumbnailFileId: 10,
+      thumbnailAutomatic: true,
+      files: [
+        { ...file, hasThumbnail: true },
+        {
+          id: 11,
+          filename: 'printed.png',
+          type: 'image',
+          contentType: 'image/png',
+          size: 200 * 1024,
+          createdAt: '2026-03-12T09:01:00Z',
+          hasThumbnail: true
+        }
+      ]
+    };
+    get.mockResolvedValue({ data: pinnable });
+    let releasePin: (value: unknown) => void = () => {};
+    put.mockReturnValue(new Promise((resolve) => (releasePin = resolve)));
+    const view = render(ModelPage, { data: { id: 7 } });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Use as thumbnail' }));
+
+    get.mockResolvedValue({ data: asVersion });
+    await view.rerender({ data: { id: 9 } });
+    await screen.findByRole('heading', { name: 'Bracket v1' });
+
+    expect(put).toHaveBeenCalledTimes(1);
+    releasePin({ data: { ...pinnable, thumbnailFileId: 11, thumbnailAutomatic: false } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByRole('heading', { name: 'Bracket v1' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Filament Dry Box' })).toBeNull();
+  });
+
+  // The refusal is the other half of the same bug. A pin that is refused after
+  // the user has moved on would put "could not change the thumbnail" over a
+  // model whose thumbnail nobody touched.
+  it('ignores a pin refusal that answers after the id changed', async () => {
+    const pinnable = {
+      ...withVersions,
+      fileCount: 2,
+      thumbnailFileId: 10,
+      thumbnailAutomatic: true,
+      files: [
+        { ...file, hasThumbnail: true },
+        {
+          id: 11,
+          filename: 'printed.png',
+          type: 'image',
+          contentType: 'image/png',
+          size: 200 * 1024,
+          createdAt: '2026-03-12T09:01:00Z',
+          hasThumbnail: true
+        }
+      ]
+    };
+    get.mockResolvedValue({ data: pinnable });
+    let releasePin: (value: unknown) => void = () => {};
+    put.mockReturnValue(new Promise((resolve) => (releasePin = resolve)));
+    const view = render(ModelPage, { data: { id: 7 } });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Use as thumbnail' }));
+
+    get.mockResolvedValue({ data: asVersion });
+    await view.rerender({ data: { id: 9 } });
+    await screen.findByRole('heading', { name: 'Bracket v1' });
+
+    releasePin({ error: { detail: 'that file is gone' } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(/that file is gone/)).toBeNull();
+  });
+
+  // The same navigation, but the request rejects rather than answering. A
+  // separate test because it is a separate branch: the guard in `catch` is not
+  // the guard in the body, and without its own case removing it stays green.
+  it('ignores a pin that fails outright after the id changed', async () => {
+    const pinnable = {
+      ...withVersions,
+      fileCount: 2,
+      thumbnailFileId: 10,
+      thumbnailAutomatic: true,
+      files: [
+        { ...file, hasThumbnail: true },
+        {
+          id: 11,
+          filename: 'printed.png',
+          type: 'image',
+          contentType: 'image/png',
+          size: 200 * 1024,
+          createdAt: '2026-03-12T09:01:00Z',
+          hasThumbnail: true
+        }
+      ]
+    };
+    get.mockResolvedValue({ data: pinnable });
+    let failPin: (reason: unknown) => void = () => {};
+    put.mockReturnValue(new Promise((_resolve, reject) => (failPin = reject)));
+    const view = render(ModelPage, { data: { id: 7 } });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Use as thumbnail' }));
+
+    get.mockResolvedValue({ data: asVersion });
+    await view.rerender({ data: { id: 9 } });
+    await screen.findByRole('heading', { name: 'Bracket v1' });
+
+    failPin(new Error('offline'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(/Could not reach the server/)).toBeNull();
+  });
+
+  // Every other write on this page disables its own button while it runs. The
+  // delete is the one where a second click is unrecoverable, so it is the one
+  // worth asserting: without it, confirming twice sends two deletes.
+  it('disables the delete confirmation while it runs', async () => {
+    get.mockResolvedValue({ data: model });
+    let releaseDelete: (value: unknown) => void = () => {};
+    del.mockReturnValue(new Promise((resolve) => (releaseDelete = resolve)));
+    render(ModelPage, { data });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete model' }));
+
+    const confirm = await screen.findByRole('button', { name: 'Deleting…' });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    expect(del).toHaveBeenCalledTimes(1);
+
+    releaseDelete({ data: undefined });
+    await waitFor(() => expect(goto).toHaveBeenCalledWith('/'));
   });
 });

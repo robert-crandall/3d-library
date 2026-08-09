@@ -69,6 +69,7 @@ func TestSpecDescribesTheContract(t *testing.T) {
 		{"/api/models/{id}/files/{fileId}", "get", "200", []string{"401", "404"}},
 		{"/api/models/{id}/files/{fileId}", "delete", "204", []string{"401", "404"}},
 		{"/api/models/{id}/thumbnail", "put", "200", []string{"401", "404", "422"}},
+		{"/api/models/{id}/parent", "put", "204", []string{"401", "404", "422"}},
 		{"/api/library/counts", "get", "200", []string{"401"}},
 		{"/api/categories", "get", "200", []string{"401"}},
 		{"/api/categories", "post", "201", []string{"401", "422"}},

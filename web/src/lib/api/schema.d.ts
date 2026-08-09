@@ -359,6 +359,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/models/{id}/parent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Make a model a version of another
+         * @description Makes this model a version of the given model, or detaches it and returns it to the library when parentId is null. Versions are one level deep: a model that has versions of its own cannot become one.
+         */
+        put: operations["set-model-parent"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/models/{id}/thumbnail": {
         parameters: {
             query?: never;
@@ -713,6 +733,16 @@ export interface components {
              */
             type: string;
         };
+        FamilyMember: {
+            /** Format: date-time */
+            createdAt: string;
+            description: string;
+            /** Format: int64 */
+            fileCount: number;
+            /** Format: int64 */
+            id: number;
+            name: string;
+        };
         File: {
             /**
              * Format: uri
@@ -809,6 +839,7 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
             description: string;
+            family: components["schemas"]["FamilyMember"][];
             /** Format: int64 */
             fileCount: number;
             files: components["schemas"]["File"][];
@@ -816,6 +847,8 @@ export interface components {
             id: number;
             materials: components["schemas"]["Label"][];
             name: string;
+            /** Format: int64 */
+            parentId?: number;
             printTips: string;
             sourceUrl: string;
             tags: components["schemas"]["Label"][];
@@ -915,6 +948,19 @@ export interface components {
             name?: string;
             /** @description Password (8-72 chars) */
             password: string;
+        };
+        SetParentInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/SetParentInputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description The model this becomes a version of, or null to detach it
+             */
+            parentId: number | null;
         };
         SetThumbnailInputBody: {
             /**
@@ -2315,6 +2361,66 @@ export interface operations {
                 content: {
                     "image/png": string;
                 };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "set-model-parent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetParentInputBody"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Unauthorized */
             401: {

@@ -5,6 +5,8 @@
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import EditModelDialog from '$lib/components/EditModelDialog.svelte';
   import UploadDialog from '$lib/components/UploadDialog.svelte';
+  import AttachVersionDialog from '$lib/components/AttachVersionDialog.svelte';
+  import VersionsPanel from '$lib/components/VersionsPanel.svelte';
   import SliceSettings from '$lib/components/SliceSettings.svelte';
   import FilePreviewPanel from '$lib/components/FilePreviewPanel.svelte';
   import { hasPreview } from '$lib/preview';
@@ -14,7 +16,7 @@
   import { library } from '$lib/library.svelte';
   import { formatBytes, formatDate, formatFileCount } from '$lib/format';
   import { sliceRows } from '$lib/slice';
-  import type { ModelDetail, ModelFile } from '$lib/upload';
+  import type { FamilyMember, ModelDetail, ModelFile } from '$lib/upload';
 
   let { data }: { data: { id: number } } = $props();
 
@@ -37,7 +39,9 @@
 
   let editing = $state(false);
   let adding = $state(false);
+  let attaching = $state(false);
   let deletingModel = $state(false);
+  let detaching = $state<FamilyMember>();
   let deletingFile = $state<ModelFile>();
   // Shown inside whichever dialog is open. Separate from `error`, which belongs
   // to the page: a refused edit does not mean the model on screen is wrong.
@@ -60,18 +64,43 @@
   // mount, so an always-present panel would fetch 130 KB to tell a model of photographs
   // there is nothing to show.
   const previewable = $derived(model ? hasPreview(model.files) : false);
+
+  // A model with no versions shows no panel at all, so "does this model have a
+  // family" is "is there more than just itself in it".
+  const hasVersions = $derived((model?.family.length ?? 0) > 1);
+  // Only a root can gain versions - the server refuses a chain, and offering a
+  // button that can only be refused is worse than not offering it.
+  const isRoot = $derived(model !== undefined && model.parentId === undefined);
+  // What a delete takes with it. A root's confirmation has to name the versions
+  // and their files, because those are the blobs the user cannot see from here;
+  // a version's delete only ever takes its own.
+  const doomed = $derived.by(() => {
+    if (!model) return { versions: 0, files: 0 };
+    if (!isRoot) return { versions: 0, files: model.fileCount };
+    return {
+      versions: model.family.length - 1,
+      files: model.family.reduce((sum, member) => sum + member.fileCount, 0)
+    };
+  });
   // Its own message rather than the page's `error`, which is only rendered by
   // the `failed` branch: a refused pin must not replace a model that loaded
   // fine with an error screen.
   let pinError = $state('');
 
   /**
-   * Read the model. Also the "it worked, now show me what is there" path after
+   * Read a model. Also the "it worked, now show me what is there" path after
    * a mutation, which is why every caller of that kind closes its dialog
    * *before* awaiting this: a re-read that fails must leave the page saying so,
    * never a dialog still offering to do the write a second time.
+   *
+   * Takes the id rather than reading `data.id`, because the two can differ for
+   * the length of a request: clicking a version in the panel changes `data.id`
+   * while a re-read of the old model is still in flight.
    */
-  async function load() {
+  let generation = 0;
+
+  async function load(id: number) {
+    const mine = ++generation;
     status = 'loading';
     error = '';
     // A pin failure is about the model as it was; a re-read replaces that, so
@@ -79,8 +108,12 @@
     pinError = '';
     try {
       const { data: body, error: failure, response } = await api.GET('/api/models/{id}', {
-        params: { path: { id: data.id } }
+        params: { path: { id } }
       });
+      // A newer read has started, so this response describes a model the page is
+      // no longer showing. Without the check, clicking through two versions
+      // quickly can leave the first one's body on the second one's URL.
+      if (mine !== generation) return;
       if (failure) {
         if (response.status === 404) {
           status = 'missing';
@@ -95,12 +128,46 @@
     } catch {
       // openapi-fetch lets a fetch-level rejection through, so without this the
       // page would sit on "Loading…" forever.
+      if (mine !== generation) return;
       error = 'Could not reach the server.';
       status = 'failed';
     }
   }
 
-  load();
+  // Not a bare call at setup. The versions panel links from one family member to
+  // another, and those share this route, so SvelteKit reuses this component and
+  // only `data.id` changes - a one-shot load would leave the previous model on
+  // screen under the new URL.
+  //
+  // Component reuse is also why the dialogs are closed here. They are page
+  // state, so without this they survive the navigation still describing the
+  // model that has just been left: the worst of them is Delete, which counts
+  // the old model's files and versions but deletes whatever `data.id` is by the
+  // time it is confirmed.
+  $effect(() => {
+    const id = data.id;
+    editing = false;
+    adding = false;
+    attaching = false;
+    deletingModel = false;
+    detaching = undefined;
+    deletingFile = undefined;
+    dialogError = '';
+    load(id);
+  });
+
+  /**
+   * Whether a write that was aimed at `id` has been overtaken by a navigation.
+   *
+   * Reachable only since versions: the panel links from one family member to
+   * another and they share this route, so a click does not unmount the page and
+   * does not cancel a request already in flight. Without this, a save or a pin
+   * that answers after the click paints the previous model under the new
+   * model's URL.
+   */
+  function stale(id: number) {
+    return id !== data.id;
+  }
 
   async function save(edits: {
     name: string;
@@ -111,6 +178,9 @@
     tagIds: number[];
     materialIds: number[];
   }) {
+    // Captured, because the panel makes it possible to leave this model while
+    // its own write is still in flight - see `stale`.
+    const id = data.id;
     busy = true;
     dialogError = '';
     try {
@@ -118,6 +188,11 @@
         params: { path: { id: data.id } },
         body: edits
       });
+      // Checked before the outcome is read, not after. A refusal answers the
+      // model that was left, so putting it on screen here would show it against
+      // a model it never described - and the navigation has already cleared the
+      // dialog it belonged to, so it would surface in the next one opened.
+      if (stale(id)) return;
       if (failure) {
         dialogError = apiErrorMessage(failure, 'Could not save.');
         return;
@@ -132,6 +207,7 @@
       // one extra GET.
       library.refresh();
     } catch {
+      if (stale(id)) return;
       dialogError = 'Could not reach the server.';
     } finally {
       busy = false;
@@ -155,7 +231,7 @@
       // out is Try again, rather than in a dialog still offering to delete
       // something that no longer exists.
       deletingFile = undefined;
-      await load();
+      await load(data.id);
     } catch {
       dialogError = 'Could not reach the server.';
     } finally {
@@ -172,13 +248,15 @@
    * table row with no dialog to put it in, and the row is still on screen.
    */
   async function pinThumbnail(fileId: number | null) {
+    const id = data.id;
     pinning = true;
     pinError = '';
     try {
       const { data: body, error: failure } = await api.PUT('/api/models/{id}/thumbnail', {
-        params: { path: { id: data.id } },
+        params: { path: { id } },
         body: { fileId }
       });
+      if (stale(id)) return;
       if (failure) {
         pinError = apiErrorMessage(failure, 'Could not change the thumbnail.');
         return;
@@ -188,9 +266,43 @@
       // so the page shows the real outcome rather than guessing at it.
       model = body;
     } catch {
+      if (stale(id)) return;
       pinError = 'Could not reach the server.';
     } finally {
       pinning = false;
+    }
+  }
+
+  /**
+   * Attach a model as a version of this one, or detach one back into the
+   * library. One call for both, because they are the same write: the field is
+   * nullable and clearing it is what "detach" means.
+   *
+   * Both are driven from a family member's page and both change the family, so
+   * both re-read *this* model rather than trusting a local edit - the server
+   * decides the family and its order.
+   */
+  async function setParent(modelId: number, parentId: number | null) {
+    busy = true;
+    dialogError = '';
+    try {
+      const { error: failure } = await api.PUT('/api/models/{id}/parent', {
+        params: { path: { id: modelId } },
+        body: { parentId }
+      });
+      if (failure) {
+        dialogError = apiErrorMessage(failure, 'Could not change that version.');
+        return;
+      }
+      attaching = false;
+      detaching = undefined;
+      // The grid gained or lost a tile, so the sidebar's counts moved.
+      library.refresh();
+      await load(data.id);
+    } catch {
+      dialogError = 'Could not reach the server.';
+    } finally {
+      busy = false;
     }
   }
 
@@ -217,10 +329,7 @@
 </script>
 
 <!--
-  Screen 1c of the design, minus the parts no milestone has built yet: versions,
-  category and tags. Those are omitted, not rendered empty - a panel with nothing
-  in it reads as broken, where an absent panel reads as a feature that is not here
-  yet.
+  Screen 1c of the design, minus the parts no milestone has built yet.
 
   "Open in slicer" is on the design and is deliberately not built; the epic cut
   it from v1.
@@ -239,7 +348,7 @@
     <button
       type="button"
       class="mt-6 rounded border border-line-strong px-3 py-1.5 text-sm"
-      onclick={load}
+      onclick={() => load(data.id)}
     >
       Try again
     </button>
@@ -291,6 +400,18 @@
         >
           Add files
         </button>
+        {#if isRoot}
+          <!-- Roots only: a version cannot have versions of its own, so on a
+               version's page this button could only ever be refused. -->
+          <button
+            type="button"
+            class="rounded border border-line-strong px-3 py-1.5 text-sm"
+            disabled={mutating}
+            onclick={() => ((dialogError = ''), (attaching = true))}
+          >
+            Add version
+          </button>
+        {/if}
         <button
           type="button"
           class="rounded border border-line-strong px-3 py-1.5 text-sm text-danger"
@@ -465,6 +586,15 @@
           <SliceSettings meta={sliced.extractedMeta} filename={sliced.filename} />
         {/if}
 
+        {#if hasVersions}
+          <VersionsPanel
+            family={model.family}
+            currentId={model.id}
+            {mutating}
+            ondetach={(member) => ((dialogError = ''), (detaching = member))}
+          />
+        {/if}
+
         {#if model.description}
           <section class="rounded-tile border border-line bg-surface px-4 py-3">
             <h2 class="text-sm font-semibold">Description</h2>
@@ -511,7 +641,7 @@
       // The dialog decides: false when nothing was sent, true when files landed
       // and the count on screen is now behind. Reading it rather than assuming
       // it is what keeps a cancel from costing a request.
-      if (opts?.reload) load();
+      if (opts?.reload) load(data.id);
     }}
   />
 {/if}
@@ -528,10 +658,44 @@
   />
 {/if}
 
+{#if model && attaching}
+  <AttachVersionDialog
+    parentId={model.id}
+    {busy}
+    error={dialogError}
+    onattach={(id) => model && setParent(id, model.id)}
+    oncancel={() => (attaching = false)}
+  />
+{/if}
+
+{#if detaching}
+  <!-- No confirmation, unlike every other dialog on this page: detaching is the
+       one reversible write here, and its files are untouched. The dialog exists
+       only so a refusal has somewhere to be read. -->
+  <ConfirmDialog
+    title="Detach version"
+    body="{detaching.name} goes back to the library as its own entry. Its {formatFileCount(
+      detaching.fileCount
+    )} stay with it."
+    confirm="Detach"
+    {busy}
+    error={dialogError}
+    onconfirm={() => detaching && setParent(detaching.id, null)}
+    oncancel={() => (detaching = undefined)}
+  />
+{/if}
+
 {#if model && deletingModel}
+  <!--
+    Two sentences for a root with versions, because the versions' files are the
+    ones the user cannot see from this page: the header says "3 files" and the
+    delete takes nine.
+  -->
   <ConfirmDialog
     title="Delete model"
-    body="{model.name} and its {formatFileCount(model.fileCount)} will be deleted. This cannot be undone."
+    body={doomed.versions > 0
+      ? `${model.name}, its ${doomed.versions === 1 ? '1 version' : `${doomed.versions} versions`}, and all ${formatFileCount(doomed.files)} between them will be deleted. This cannot be undone.`
+      : `${model.name} and its ${formatFileCount(doomed.files)} will be deleted. This cannot be undone.`}
     confirm="Delete model"
     {busy}
     error={dialogError}

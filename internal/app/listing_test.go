@@ -427,14 +427,14 @@ func TestSearchRespectsScopeAndRoots(t *testing.T) {
 	seed(t, pool, "owner8@example.com", false,
 		[2]string{"Secret bracket", "private"}, [2]string{"Bracket v2", "a version"})
 
-	// Milestone 9 owns the endpoint that nests a model; until then the column
-	// is only reachable from SQL, which is also the honest way to set up a
-	// state this app's own API cannot yet produce.
-	if _, err := pool.Exec(t.Context(),
-		`UPDATE models SET parent_id = (SELECT id FROM models WHERE name = 'Secret bracket')
-		  WHERE name = 'Bracket v2'`); err != nil {
-		t.Fatalf("nest: %v", err)
+	// Through the real endpoint now that milestone 9 has built it: a search that
+	// hides versions is only proven by a version the app itself can make.
+	byName := map[string]int64{}
+	for _, m := range decodeList(t, mustGet(t, owner, "/api/models")).Items {
+		byName[m.Name] = m.ID
 	}
+	parentID := byName["Secret bracket"]
+	mustAttach(t, owner, byName["Bracket v2"], &parentID)
 
 	got := decodeList(t, mustGet(t, owner, "/api/models?q=bracket"))
 	if got.Total != 1 || len(got.Items) != 1 || got.Items[0].Name != "Secret bracket" {
