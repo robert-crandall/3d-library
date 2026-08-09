@@ -36,6 +36,7 @@ func Register(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	registerTaxonomy(api, svc, currentUser)
 	registerCollections(api, svc, currentUser)
 	registerBulk(api, svc, currentUser)
+	registerDuplicates(api, svc, currentUser)
 }
 
 // uploadInput carries the streaming multipart reader from the resolver to the

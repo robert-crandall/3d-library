@@ -206,6 +206,11 @@
 
   <div class="flex flex-col gap-3 border-t border-line px-5 py-4">
     <a
+      href="/duplicates"
+      aria-current={page.url.pathname === '/duplicates' ? 'page' : undefined}
+      class="text-sm">Duplicates</a
+    >
+    <a
       href="/settings"
       aria-current={page.url.pathname === '/settings' ? 'page' : undefined}
       class="text-sm">Settings</a
