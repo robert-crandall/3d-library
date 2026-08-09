@@ -988,6 +988,41 @@ describe('model detail taxonomy', () => {
     expect(screen.queryByText(/Could not reach the server/)).toBeNull();
   });
 
+  // Detaching is driven from a family member's page, and the panel is a set of
+  // links to the other members - so leaving mid-write is one click away. What a
+  // stale answer does here is not paint an error (every button that opens a
+  // dialog clears that first) but close dialogs and re-read: after a
+  // navigation, those are the new page's dialogs, opened deliberately, and they
+  // vanish.
+  it('does not close the new page\'s dialogs when a detach answers late', async () => {
+    get.mockResolvedValue({ data: withVersions });
+    let releaseDetach: (value: unknown) => void = () => {};
+    put.mockReturnValue(new Promise((resolve) => (releaseDetach = resolve)));
+    const view = render(ModelPage, { data: { id: 7 } });
+
+    await screen.findByRole('heading', { name: 'Filament Dry Box' });
+    const detachButtons = await screen.findAllByRole('button', { name: 'Detach' });
+    await fireEvent.click(detachButtons[detachButtons.length - 1]);
+    await fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Detach' })
+    );
+
+    get.mockResolvedValue({ data: asVersion });
+    await view.rerender({ data: { id: 9 } });
+    await screen.findByRole('heading', { name: 'Bracket v1' });
+
+    // A dialog opened on the model the user is actually looking at now.
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const reads = modelReads();
+
+    releaseDetach({ data: undefined });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(screen.queryByRole('dialog')).toBeTruthy();
+    // And no re-read of a model nobody asked about.
+    expect(modelReads()).toBe(reads);
+  });
+
   // Every other write on this page disables its own button while it runs. The
   // delete is the one where a second click is unrecoverable, so it is the one
   // worth asserting: without it, confirming twice sends two deletes.

@@ -283,6 +283,10 @@
    * decides the family and its order.
    */
   async function setParent(modelId: number, parentId: number | null) {
+    // `modelId` is the model being re-parented, which for an attach is not this
+    // one. `id` is the page, and it is the page that has to still be here when
+    // the answer comes back - see `stale`.
+    const id = data.id;
     busy = true;
     dialogError = '';
     try {
@@ -290,6 +294,12 @@
         params: { path: { id: modelId } },
         body: { parentId }
       });
+      // Guarding the whole outcome, but it is the success below that makes this
+      // reachable: it closes dialogs and re-reads, and after a navigation those
+      // are the *new* page's dialogs. The refusal above needs no guard of its
+      // own - every button that opens a dialog clears `dialogError` first - and
+      // one guard for both is simpler than a guard that has to explain itself.
+      if (stale(id)) return;
       if (failure) {
         dialogError = apiErrorMessage(failure, 'Could not change that version.');
         return;
@@ -298,7 +308,7 @@
       detaching = undefined;
       // The grid gained or lost a tile, so the sidebar's counts moved.
       library.refresh();
-      await load(data.id);
+      await load(id);
     } catch {
       dialogError = 'Could not reach the server.';
     } finally {
