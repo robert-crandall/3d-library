@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -216,12 +217,19 @@ func decodeList(t *testing.T, body string) modelPage {
 
 // emptyList reports whether a list response is an empty page.
 //
-// It looks at the raw JSON as well as the decoded length, because a nil slice
+// It reads the raw `items` value as well as the total, because a nil slice
 // encodes as null, the contract says it never is, and a decoded len() of zero
-// cannot tell the two apart.
+// cannot tell the two apart. Comparing the parsed field rather than searching
+// the body for a substring keeps it from depending on the encoder's spacing.
 func emptyList(t *testing.T, body string) bool {
 	t.Helper()
-	return strings.Contains(body, `"items":[]`) && decodeList(t, body).Total == 0
+	var raw struct {
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		t.Fatalf("decode list: %v (body %q)", err, body)
+	}
+	return string(bytes.TrimSpace(raw.Items)) == "[]" && decodeList(t, body).Total == 0
 }
 
 // decodeModel reads a single-model response. Every endpoint that returns one
