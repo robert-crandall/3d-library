@@ -82,6 +82,12 @@ type Filter struct {
 	CategoryID    *int64
 	TagID         *int64
 	Uncategorized bool
+	// CollectionID narrows to one collection. Unlike CategoryID and TagID, an
+	// id that is not this user's is ErrNotFound rather than a page with nothing
+	// on it: it is the only place another user's collection can 404, and the
+	// grid has to tell an empty collection from one that is not there, because
+	// only the first gets an empty state offering to fill it.
+	CollectionID *int64
 	// Query is the search term. Empty - or only whitespace - is no search.
 	Query string
 	// Sort is the ordering. The zero value is the empty string, which sorts

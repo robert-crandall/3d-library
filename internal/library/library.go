@@ -214,6 +214,16 @@ type ModelDetail struct {
 	Tags      []Label `json:"tags" nullable:"false"`
 	Materials []Label `json:"materials" nullable:"false"`
 
+	// Collections is every collection this model is in, non-nil for the same
+	// reason. Label rather than a type of its own, because a name and an id is
+	// all a collection is on a model, which is exactly why Tags and Materials
+	// already share it.
+	//
+	// Not filtered to roots. A version that was put in a collection is in it,
+	// and this field answers what this model is in; the roots-only rule is
+	// about the grid and the counts, and it is applied there.
+	Collections []Label `json:"collections" nullable:"false"`
+
 	// ParentID is set when this model is a version of another. It is also how a
 	// client finds the family's root without a per-entry flag: the root's id is
 	// ParentID if there is one, and this model's own id otherwise.
@@ -364,6 +374,7 @@ func (s *Service) Create(ctx context.Context, userID int64, name string, parts *
 	// describes the schema, not what Go encodes a nil slice as.
 	m.Tags = []Label{}
 	m.Materials = []Label{}
+	m.Collections = []Label{}
 	// And its family is itself: `family` is non-nil in the contract too, and a
 	// model that was created a moment ago is nobody's version and has none.
 	m.Family = []FamilyMember{{
@@ -774,6 +785,17 @@ func (s *Service) List(ctx context.Context, userID int64, f Filter) (Page, error
 		where += fmt.Sprintf(
 			" AND EXISTS (SELECT 1 FROM model_tags mt WHERE mt.model_id = m.id AND mt.tag_id = $%d)", len(args))
 	}
+	if f.CollectionID != nil {
+		// Checked rather than just filtered, because an empty page cannot say
+		// "no such collection" and the client needs that answer. Only when the
+		// filter is set, so the ordinary list still costs one round trip.
+		if err := s.collectionExists(ctx, userID, *f.CollectionID); err != nil {
+			return Page{}, err
+		}
+		args = append(args, *f.CollectionID)
+		where += fmt.Sprintf(
+			" AND EXISTS (SELECT 1 FROM model_collections mc WHERE mc.model_id = m.id AND mc.collection_id = $%d)", len(args))
+	}
 	// No length cap here. huma's maxLength on the request is the one place that
 	// enforces it, and it counts characters; a second cap counting bytes would
 	// cut a multi-byte character in half and hand Postgres invalid UTF-8.
@@ -933,6 +955,11 @@ func (s *Service) Get(ctx context.Context, userID, id int64) (ModelDetail, error
 	if err := s.loadLabels(ctx, userID, &m); err != nil {
 		return ModelDetail{}, err
 	}
+	collections, err := s.loadCollections(ctx, userID, m.ID)
+	if err != nil {
+		return ModelDetail{}, err
+	}
+	m.Collections = collections
 	if err := s.loadFamily(ctx, userID, &m); err != nil {
 		return ModelDetail{}, err
 	}

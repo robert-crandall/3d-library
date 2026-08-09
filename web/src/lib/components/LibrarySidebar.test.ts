@@ -24,6 +24,9 @@ function fill() {
     { id: 8, name: 'petg', modelCount: 5 },
     { id: 9, name: 'quick-print', modelCount: 1 }
   ];
+  library.collections = [
+    { id: 12, name: 'Dry box build', description: 'Every part of it.', modelCount: 4 }
+  ];
   library.counts = { models: 41, uncategorized: 9 };
   library.error = '';
 }
@@ -47,6 +50,7 @@ describe('LibrarySidebar', () => {
     expect(href(/Functional/)).toBe('/?categoryId=3');
     expect(href(/petg/)).toBe('/?tagId=8');
     expect(href(/Uncategorized/)).toBe('/?uncategorized=true');
+    expect(href(/Dry box build/)).toBe('/?collectionId=12');
     // The counts are the point of the row: a category list without them is a
     // list of words, and these come from the server rather than from counting
     // whatever the grid happens to be showing.
@@ -297,10 +301,10 @@ describe('LibrarySidebar', () => {
 
     const stale = library.refresh();
     const fresh = library.refresh();
-    // Four endpoints per refresh, so the first four resolvers are the stale one.
-    answers.slice(4).forEach((resolve) => resolve({ data: [{ id: 4, name: 'Toys', color: '#ec4899', modelCount: 2 }] }));
+    // Five endpoints per refresh, so the first five resolvers are the stale one.
+    answers.slice(5).forEach((resolve) => resolve({ data: [{ id: 4, name: 'Toys', color: '#ec4899', modelCount: 2 }] }));
     await fresh;
-    answers.slice(0, 4).forEach((resolve) => resolve({ data: [{ id: 3, name: 'Functional', color: '#3b82f6', modelCount: 12 }] }));
+    answers.slice(0, 5).forEach((resolve) => resolve({ data: [{ id: 3, name: 'Functional', color: '#3b82f6', modelCount: 12 }] }));
     await stale;
 
     expect(library.categories.map((c) => c.name)).toEqual(['Toys']);
@@ -333,5 +337,60 @@ describe('LibrarySidebar', () => {
     expect(library.categories.map((c) => c.name)).toEqual(['Toys']);
     get.mockImplementation((..._args: unknown[]) => Promise.resolve({ data: [] as unknown }));
     library.reset();
+  });
+});
+
+// Collections are the third list in the sidebar and the only one whose rows do
+// not exist in the design as chips, so they get their own three.
+describe('LibrarySidebar collections', () => {
+  beforeEach(() => {
+    nav.url = new URL('http://localhost/');
+    goto.mockClear();
+    vi.useRealTimers();
+  });
+
+  it('shows each collection with its count, and hides the list when there are none', () => {
+    fill();
+    render(LibrarySidebar);
+    const section = screen.getByRole('navigation', { name: 'Collections' });
+    // The count is the row's other half: a collection list without it does not
+    // say which build is actually filled in.
+    expect(section.textContent).toContain('Dry box build');
+    expect(section.textContent).toContain('4');
+
+    cleanup();
+    library.collections = [];
+    render(LibrarySidebar);
+    // Not an empty heading. A heading over nothing is a control that does
+    // nothing, which is what the other two lists already avoid.
+    expect(screen.queryByRole('navigation', { name: 'Collections' })).toBeNull();
+  });
+
+  it('clears the collection when its own row is clicked again, and keeps the search', () => {
+    nav.url = new URL('http://localhost/?collectionId=12&q=box');
+    fill();
+    render(LibrarySidebar);
+
+    // Selected, so the link is the way out - and the search survives, because
+    // narrowing a search by collection is not starting the search over.
+    expect(href(/Dry box build/)).toBe('/?q=box');
+    expect(
+      screen.getByRole('link', { name: /Dry box build/ }).getAttribute('aria-current')
+    ).toBe('page');
+  });
+
+  it('narrows to a collection and a category at once, and All models says so', () => {
+    nav.url = new URL('http://localhost/?categoryId=3');
+    fill();
+    render(LibrarySidebar);
+
+    // The server ANDs the two axes, so the sidebar must not silently drop one.
+    expect(href(/Dry box build/)).toBe('/?categoryId=3&collectionId=12');
+    // A collection is a filter, so "All models" is not current while one is on.
+    cleanup();
+    nav.url = new URL('http://localhost/?collectionId=12');
+    fill();
+    render(LibrarySidebar);
+    expect(screen.getByRole('link', { name: /All models/ }).getAttribute('aria-current')).toBeNull();
   });
 });

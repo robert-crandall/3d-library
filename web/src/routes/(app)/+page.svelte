@@ -43,9 +43,45 @@
 
   const category = $derived(library.categories.find((c) => String(c.id) === view.categoryId));
   const tag = $derived(library.tags.find((t) => String(t.id) === view.tagId));
-  const filtered = $derived(Boolean(view.categoryId || view.tagId || view.uncategorized));
-  const heading = $derived(
-    category?.name ?? (view.uncategorized ? 'Uncategorized' : (tag ? `#${tag.name}` : 'All models'))
+  const collection = $derived(
+    library.collections.find((c) => String(c.id) === view.collectionId)
+  );
+  const filtered = $derived(
+    Boolean(view.categoryId || view.tagId || view.collectionId || view.uncategorized)
+  );
+
+  /**
+   * What this view is of, or null while it is not yet knowable.
+   *
+   * A collection wins over the other axes, because filing a build's parts
+   * together is the reason the view exists and "Uncategorized" over a
+   * collection would name the least interesting half of the filter.
+   *
+   * Null is the load-bearing case. The name comes from the store, the layout
+   * kicks that off without awaiting it, and it can also fail outright - so a
+   * `?? 'All models'` fallback would put a heading on screen that is not just
+   * late but flatly wrong about which models are below it, and would stay wrong
+   * if the store never loaded. No heading is the honest answer until there is
+   * one; LibraryError already says the store failed.
+   */
+  const heading = $derived.by(() => {
+    if (view.collectionId) return collection?.name ?? null;
+    if (category) return category.name;
+    if (view.uncategorized) return 'Uncategorized';
+    if (tag) return `#${tag.name}`;
+    return 'All models';
+  });
+
+  // A collection is the only filter with a description, and it is only worth
+  // showing when the collection is what the heading names.
+  const subheading = $derived(view.collectionId ? (collection?.description ?? '') : '');
+
+  // An empty collection is a collection you have not filled in yet, which is a
+  // different thing to say than "nothing matches". Only when it is the whole
+  // filter: with a search or a category on top, nothing matching really is
+  // nothing matching.
+  const onlyCollection = $derived(
+    Boolean(view.collectionId) && !view.q && !view.categoryId && !view.tagId && !view.uncategorized
   );
 
   const pages = $derived(pageCount(total, pageSize));
@@ -139,15 +175,20 @@
     <div class="min-w-0">
       <p class="text-xs font-medium tracking-wide text-faint uppercase">Library</p>
       <h1 class="mt-1 flex items-center gap-2 text-2xl font-semibold">
-        {#if category}
+        {#if category && !view.collectionId}
           <span
             class="h-2.5 w-2.5 shrink-0 rounded-xs"
             style="background-color: {category.color}"
             aria-hidden="true"
           ></span>
         {/if}
-        <span class="truncate">{heading}</span>
+        {#if heading}
+          <span class="truncate">{heading}</span>
+        {/if}
       </h1>
+      {#if subheading}
+        <p class="mt-1 max-w-prose text-sm text-muted">{subheading}</p>
+      {/if}
       {#if filtered}
         <a class="mt-1 inline-block text-sm text-muted underline" href={viewHref(withoutFilters(view))}
           >Clear filter</a
@@ -217,17 +258,37 @@
         Clear search
       </a>
     </div>
+  {:else if models.length === 0 && onlyCollection}
+    <!--
+      An empty collection is not a failed filter - it is a collection you have
+      not put anything in yet - so it says how to fill it instead of offering to
+      take the filter away.
+    -->
+    <div class="mt-8 rounded-tile border border-dashed border-line-strong px-6 py-16 text-center">
+      <h2 class="text-base font-medium">This collection is empty</h2>
+      <p class="mx-auto mt-2 max-w-sm text-sm text-muted">
+        Open a model and use Collections to add it here.
+      </p>
+      <a
+        class="mt-6 inline-block rounded border border-line-strong px-3 py-1.5 text-sm"
+        href={viewHref(withoutFilters(view))}
+      >
+        Show all models
+      </a>
+    </div>
   {:else if models.length === 0 && filtered}
     <!--
       A filter that matches nothing is not an empty library, and offering
       "Upload your first model" here would be wrong twice: the library is not
       empty, and an upload would not show up under this filter anyway.
+
+      No advice line either. This branch is every combination of category, tag,
+      collection, uncategorized and search, so anything specific enough to be
+      useful ("use Edit to give it a category") is wrong for some of them, and
+      the heading plus the button already say what happened and what to do.
     -->
     <div class="mt-8 rounded-tile border border-dashed border-line-strong px-6 py-16 text-center">
       <h2 class="text-base font-medium">Nothing matches this filter</h2>
-      <p class="mx-auto mt-2 max-w-sm text-sm text-muted">
-        No models are filed here yet. Open a model and use Edit to give it a category or a tag.
-      </p>
       <a
         class="mt-6 inline-block rounded border border-line-strong px-3 py-1.5 text-sm"
         href={viewHref(withoutFilters(view))}

@@ -19,6 +19,7 @@ describe('parseView', () => {
     expect(parse('?categoryId=3&tagId=8&uncategorized=true&q=bin&sort=name&page=2')).toEqual({
       categoryId: '3',
       tagId: '8',
+      collectionId: null,
       uncategorized: true,
       q: 'bin',
       sort: 'name',
@@ -91,6 +92,7 @@ describe('viewHref and modelsQuery', () => {
     const view: View = {
       categoryId: '3',
       tagId: '8',
+      collectionId: null,
       uncategorized: false,
       q: 'bin',
       sort: 'name-desc',
@@ -113,6 +115,7 @@ describe('withFilter', () => {
   const view: View = {
     categoryId: '3',
     tagId: '8',
+    collectionId: null,
     uncategorized: false,
     q: 'bin',
     sort: 'name',
@@ -137,6 +140,7 @@ describe('withFilter', () => {
     expect(withoutFilters({ ...view, uncategorized: true })).toEqual({
       categoryId: null,
       tagId: null,
+      collectionId: null,
       uncategorized: false,
       q: 'bin',
       sort: 'name',
@@ -154,5 +158,25 @@ describe('pageCount', () => {
     expect(pageCount(24, 24)).toBe(1);
     expect(pageCount(25, 24)).toBe(2);
     expect(pageCount(48, 24)).toBe(2);
+  });
+});
+
+// A collection is the newest filter axis and the only one the server can refuse,
+// so it is worth checking it survives the round trip like the others.
+describe('collectionId', () => {
+  it('reads, writes and refuses the same values as the other ids', () => {
+    expect(parseView(new URLSearchParams('collectionId=12')).collectionId).toBe('12');
+    // Same guard as the others: a 40-digit id would be forwarded to a server
+    // that parses it as an int64 and answers 422.
+    expect(parseView(new URLSearchParams('collectionId=0')).collectionId).toBeNull();
+    expect(parseView(new URLSearchParams('collectionId=1e3')).collectionId).toBeNull();
+    expect(
+      parseView(new URLSearchParams('collectionId=99999999999999999999')).collectionId
+    ).toBeNull();
+
+    const view = parseView(new URLSearchParams('collectionId=12&categoryId=3&q=box'));
+    // The URL and the request use the same names, so one serializer writes both.
+    expect(viewHref(view)).toBe('/?categoryId=3&collectionId=12&q=box');
+    expect(modelsQuery(view)).toBe('/api/models?categoryId=3&collectionId=12&q=box');
   });
 });

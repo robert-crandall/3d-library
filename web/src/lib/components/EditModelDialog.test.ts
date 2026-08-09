@@ -17,6 +17,7 @@ const model = {
   files: [],
   tags: [],
   materials: [],
+  collections: [],
   // A model that is nobody's version and has none: its family is just itself.
   family: [
     {

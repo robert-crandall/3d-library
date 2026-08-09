@@ -10,6 +10,7 @@ type Json<P extends keyof paths, M extends 'get'> = paths[P][M] extends {
 
 export type Category = NonNullable<Json<'/api/categories', 'get'>>[number];
 export type Label = NonNullable<Json<'/api/tags', 'get'>>[number];
+export type Collection = NonNullable<Json<'/api/collections', 'get'>>[number];
 export type Counts = NonNullable<Json<'/api/library/counts', 'get'>>;
 
 /**
@@ -23,12 +24,13 @@ export type Counts = NonNullable<Json<'/api/library/counts', 'get'>>;
  * Everything is re-read from the server after a change rather than patched in
  * place. The counts move for reasons the client cannot compute - deleting a
  * category uncategorizes its models, assigning one moves two numbers at once -
- * so the only cheap way to be right is to ask. It is four small GETs.
+ * so the only cheap way to be right is to ask. It is five small GETs.
  */
 class Library {
   categories = $state<Category[]>([]);
   tags = $state<Label[]>([]);
   materials = $state<Label[]>([]);
+  collections = $state<Collection[]>([]);
   counts = $state<Counts>({ models: 0, uncategorized: 0 });
   /** Empty until something fails. The sidebar renders it instead of a stale
    *  list, because a sidebar that quietly shows yesterday's categories is
@@ -53,6 +55,7 @@ class Library {
     this.categories = [];
     this.tags = [];
     this.materials = [];
+    this.collections = [];
     this.counts = { models: 0, uncategorized: 0 };
     this.error = '';
     this.loaded = false;
@@ -61,10 +64,11 @@ class Library {
   async refresh() {
     const generation = ++this.#generation;
     try {
-      const [categories, tags, materials, counts] = await Promise.all([
+      const [categories, tags, materials, collections, counts] = await Promise.all([
         api.GET('/api/categories'),
         api.GET('/api/tags'),
         api.GET('/api/materials'),
+        api.GET('/api/collections'),
         api.GET('/api/library/counts')
       ]);
       // Two refreshes can be in flight at once - delete a tag, then delete
@@ -72,7 +76,7 @@ class Library {
       // order. Only the newest one is still the truth.
       if (generation !== this.#generation) return;
       const failure =
-        categories.error ?? tags.error ?? materials.error ?? counts.error;
+        categories.error ?? tags.error ?? materials.error ?? collections.error ?? counts.error;
       if (failure) {
         this.#fail(apiErrorMessage(failure, 'Could not load the library.'));
         return;
@@ -80,6 +84,7 @@ class Library {
       this.categories = categories.data ?? [];
       this.tags = tags.data ?? [];
       this.materials = materials.data ?? [];
+      this.collections = collections.data ?? [];
       this.counts = counts.data ?? { models: 0, uncategorized: 0 };
       this.error = '';
       this.loaded = true;
@@ -108,6 +113,7 @@ class Library {
       this.categories = [];
       this.tags = [];
       this.materials = [];
+      this.collections = [];
       this.counts = { models: 0, uncategorized: 0 };
     }
     this.error = message;
