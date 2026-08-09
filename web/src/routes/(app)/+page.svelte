@@ -1,6 +1,11 @@
 <script lang="ts">
   import ModelTile from '$lib/components/ModelTile.svelte';
   import UploadDialog from '$lib/components/UploadDialog.svelte';
+  import BulkBar from '$lib/components/BulkBar.svelte';
+  import BulkPickDialog from '$lib/components/BulkPickDialog.svelte';
+  import BulkTagsDialog from '$lib/components/BulkTagsDialog.svelte';
+  import BulkDeleteDialog from '$lib/components/BulkDeleteDialog.svelte';
+  import { EMPTY, extend, toggle } from '$lib/selection';
   import { api } from '$lib/api/client';
   import { apiErrorMessage } from '$lib/api/errors';
   import { library } from '$lib/library.svelte';
@@ -27,6 +32,13 @@
   let status = $state<'loading' | 'ready' | 'failed'>('loading');
   let error = $state('');
   let uploading = $state(false);
+  // The grid's multi-selection, and which dialog it has open. One field rather
+  // than four booleans: the four actions are mutually exclusive, and four flags
+  // would make "two dialogs at once" representable.
+  let selection = $state(EMPTY);
+  let acting = $state<'tags' | 'category' | 'collection' | 'delete'>();
+  let bulkBusy = $state(false);
+  let bulkError = $state('');
   // What the last successful response said about itself. The count line and the
   // pager read these, never the URL: ask for ?page=99 of a two-page library and
   // the server serves page 2, so links built from the URL would offer 98 and
@@ -121,6 +133,17 @@
     // because nobody knows what is in it.
     status = 'loading';
     error = '';
+    // Every filter, search, sort and page change runs through here, so this is
+    // the one place the selection has to be dropped: acting on models the user
+    // can no longer see is the failure the issue names, and a selection that
+    // survives a navigation is exactly how that happens. Clearing it does not
+    // feed back into `request`, so there is no loop.
+    selection = EMPTY;
+    // And the dialog with it. A dialog outliving its selection is a dialog
+    // whose buttons would send an empty `modelIds`, and in the delete case one
+    // whose sentence counts models the user is no longer looking at.
+    acting = undefined;
+    bulkError = '';
     try {
       // A serialized view rather than openapi-fetch's `params.query`, because
       // the URL and the API take the same parameters and one serializer means
@@ -151,6 +174,85 @@
   $effect(() => {
     load(request);
   });
+
+  function picked(id: number, mode: 'toggle' | 'range') {
+    const ordered = models.map((m) => m.id);
+    selection = mode === 'range' ? extend(selection, ordered, id) : toggle(selection, id);
+  }
+
+  /**
+   * Runs one bulk action and re-reads everything it could have changed.
+   *
+   * The reload is not optimistic. A recategorize changes the badge on every
+   * tile and the sidebar's counts, an add-to-collection changes a count this
+   * page never had, and under a filter a bulk action can move models out of the
+   * view entirely - so the honest answer is the one the server gives.
+   */
+  async function act(run: () => Promise<string>) {
+    bulkBusy = true;
+    bulkError = '';
+    let failure: string;
+    try {
+      failure = await run();
+    } catch {
+      // openapi-fetch rejects rather than returning an error when the request
+      // never reaches the server. Without this the busy flag would stay set and
+      // the dialog would be stuck with every button disabled, including Cancel.
+      failure = 'Could not reach the server.';
+    } finally {
+      bulkBusy = false;
+    }
+    if (failure) {
+      bulkError = failure;
+      return;
+    }
+    acting = undefined;
+    load(request);
+    library.refresh();
+  }
+
+  // Opening a dialog clears the last one's message. Cancelling leaves bulkError
+  // set, and the next dialog would otherwise open showing an error about an
+  // action the user did not just take.
+  function startAction(kind: typeof acting) {
+    bulkError = '';
+    acting = kind;
+  }
+
+  // Each of these returns the message to show, or '' for success, so `act`
+  // holds the busy flag and the reload in one place.
+  const applyTags = (tagIds: number[]) =>
+    act(async () => {
+      const { error: failure } = await api.POST('/api/models/bulk/tags', {
+        body: { modelIds: selection.ids, tagIds }
+      });
+      return failure ? apiErrorMessage(failure, 'Could not add the tags.') : '';
+    });
+
+  const applyCategory = (categoryId: number) =>
+    act(async () => {
+      const { error: failure } = await api.POST('/api/models/bulk/category', {
+        body: { modelIds: selection.ids, categoryId }
+      });
+      return failure ? apiErrorMessage(failure, 'Could not recategorize the models.') : '';
+    });
+
+  const applyCollection = (collectionId: number) =>
+    act(async () => {
+      const { error: failure } = await api.POST('/api/models/bulk/collection', {
+        body: { modelIds: selection.ids, collectionId }
+      });
+      return failure ? apiErrorMessage(failure, 'Could not add the models.') : '';
+    });
+
+  // Delete is not routed through `act`: its dialog owns the request, because it
+  // has to send back the counts it displayed and handle the 409 that says they
+  // moved. This is the part after that succeeded.
+  function deleted() {
+    acting = undefined;
+    load(request);
+    library.refresh();
+  }
 
   function sorted(event: Event) {
     const next = (event.currentTarget as HTMLSelectElement).value as Sort;
@@ -228,6 +330,18 @@
     <!-- The count is of matches, not of tiles on screen: it is what tells you a
          search narrowed anything when the first page looks full either way. -->
     <p class="mt-3 text-right text-sm text-muted">{countLine}</p>
+  {/if}
+
+  {#if selection.ids.length > 0}
+    <BulkBar
+      count={selection.ids.length}
+      busy={bulkBusy}
+      ontag={() => startAction('tags')}
+      oncategorize={() => startAction('category')}
+      oncollect={() => startAction('collection')}
+      ondelete={() => startAction('delete')}
+      onclear={() => (selection = EMPTY)}
+    />
   {/if}
 
   {#if error}
@@ -322,7 +436,13 @@
   {:else}
     <ul class="mt-7 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {#each models as model (model.id)}
-        <li><ModelTile {model} /></li>
+        <li>
+          <ModelTile
+            {model}
+            selected={selection.ids.includes(model.id)}
+            onselect={(mode) => picked(model.id, mode)}
+          />
+        </li>
       {/each}
     </ul>
     {#if pages > 1}
@@ -359,5 +479,46 @@
       }
     }}
     onuploaded={uploaded}
+  />
+{/if}
+
+{#if acting === 'tags'}
+  <BulkTagsDialog
+    tags={library.tags}
+    count={selection.ids.length}
+    busy={bulkBusy}
+    error={bulkError}
+    onapply={applyTags}
+    oncancel={() => (acting = undefined)}
+  />
+{:else if acting === 'category'}
+  <BulkPickDialog
+    title="Recategorize"
+    prompt={`Move ${selection.ids.length} ${selection.ids.length === 1 ? 'model' : 'models'} into one category. This replaces the category they have now.`}
+    confirm="Recategorize"
+    choices={library.categories}
+    empty="No categories yet. Add one from a model's page first."
+    busy={bulkBusy}
+    error={bulkError}
+    onpick={applyCategory}
+    oncancel={() => (acting = undefined)}
+  />
+{:else if acting === 'collection'}
+  <BulkPickDialog
+    title="Add to collection"
+    prompt={`Add ${selection.ids.length} ${selection.ids.length === 1 ? 'model' : 'models'} to a collection. Models already in it are left alone.`}
+    confirm="Add"
+    choices={library.collections}
+    empty="No collections yet. Make one from a model's page first."
+    busy={bulkBusy}
+    error={bulkError}
+    onpick={applyCollection}
+    oncancel={() => (acting = undefined)}
+  />
+{:else if acting === 'delete'}
+  <BulkDeleteDialog
+    modelIds={selection.ids}
+    ondeleted={deleted}
+    oncancel={() => (acting = undefined)}
   />
 {/if}
