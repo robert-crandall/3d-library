@@ -97,7 +97,7 @@ describe('CollectionsSection', () => {
     );
   });
 
-  it('says the models survive before deleting, without counting them', async () => {
+  it('counts what the collection shows, and says the models survive', async () => {
     del.mockResolvedValue({ data: {} });
     render(CollectionsSection);
 
@@ -105,13 +105,12 @@ describe('CollectionsSection', () => {
     // Deleting a collection is the one delete here that takes nothing away, and
     // saying so is what stops it reading like the category delete, which does.
     //
-    // It says so without the count, because modelCount is roots-only: a
-    // collection holding nothing but versions has a count of 0, and telling
-    // someone "0 models are in this collection" while it visibly holds two is
-    // worse than not counting at all.
+    // "Shows N", not "N are in this collection": modelCount is roots-only, so a
+    // collection can hold a version the number does not count. What the number
+    // is actually true about is the view, so that is what the sentence claims.
     const dialog = await screen.findByRole('dialog');
-    expect(dialog.textContent).toContain('does not delete the models in it');
-    expect(dialog.textContent).not.toMatch(/\d+ models?/);
+    expect(dialog.textContent).toContain('Shows 4 models');
+    expect(dialog.textContent).toContain('does not delete any of them');
 
     // A string name matches the whole accessible name, so this is the dialog's
     // confirm button and not the row's "Delete Dry box build".
@@ -121,18 +120,26 @@ describe('CollectionsSection', () => {
     );
   });
 
-  it('does not claim a version-only collection is empty', async () => {
+  it('does not claim a version-only collection holds nothing', async () => {
     // modelCount is roots-only, by the same rule that keeps versions out of the
-    // grid. So a collection whose only member is a version reads 0 here, and
-    // any copy built on that number would be telling the user something the
-    // model detail page contradicts.
+    // grid, so a collection whose only member is a version reads 0. Saying it
+    // *shows* 0 is true; saying it *holds* 0 would contradict the chip the
+    // model detail page puts on that version.
     library.collections = [{ id: 12, name: 'Dry box build', description: '', modelCount: 0 }];
     render(CollectionsSection);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Delete Dry box build' }));
     const dialog = await screen.findByRole('dialog');
-    expect(dialog.textContent).not.toContain('0 models');
-    expect(dialog.textContent).toContain('does not delete the models in it');
+    expect(dialog.textContent).toContain('Shows 0 models');
+    expect(dialog.textContent).not.toMatch(/0 models (are|is) in/);
+  });
+
+  it('counts one model in the singular', async () => {
+    library.collections = [{ id: 12, name: 'Dry box build', description: '', modelCount: 1 }];
+    render(CollectionsSection);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete Dry box build' }));
+    expect((await screen.findByRole('dialog')).textContent).toContain('Shows 1 model.');
   });
 
   it('re-reads the store after a write rather than patching the row', async () => {

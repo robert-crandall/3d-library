@@ -174,18 +174,23 @@
   <header class="flex items-start justify-between gap-4">
     <div class="min-w-0">
       <p class="text-xs font-medium tracking-wide text-faint uppercase">Library</p>
-      <h1 class="mt-1 flex items-center gap-2 text-2xl font-semibold">
-        {#if category && !view.collectionId}
-          <span
-            class="h-2.5 w-2.5 shrink-0 rounded-xs"
-            style="background-color: {category.color}"
-            aria-hidden="true"
-          ></span>
-        {/if}
-        {#if heading}
+      <!--
+        The whole h1, not just its text. A collection the store has not answered
+        for yet has no name to show, and an empty h1 is still a heading landmark
+        - one a screen reader announces as a nameless "heading level 1".
+      -->
+      {#if heading}
+        <h1 class="mt-1 flex items-center gap-2 text-2xl font-semibold">
+          {#if category && !view.collectionId}
+            <span
+              class="h-2.5 w-2.5 shrink-0 rounded-xs"
+              style="background-color: {category.color}"
+              aria-hidden="true"
+            ></span>
+          {/if}
           <span class="truncate">{heading}</span>
-        {/if}
-      </h1>
+        </h1>
+      {/if}
       {#if subheading}
         <p class="mt-1 max-w-prose text-sm text-muted">{subheading}</p>
       {/if}

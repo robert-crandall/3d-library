@@ -209,7 +209,7 @@
 {#if deleting}
   <ConfirmDialog
     title="Delete {deleting.name}?"
-    body="Deleting a collection does not delete the models in it."
+    body={`Shows ${deleting.modelCount} ${deleting.modelCount === 1 ? 'model' : 'models'}. Deleting the collection does not delete any of them.`}
     confirm="Delete"
     {busy}
     {error}

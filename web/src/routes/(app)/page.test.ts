@@ -378,6 +378,9 @@ describe('library page, collections', () => {
     // about which models are underneath it, and it would never correct itself.
     expect(await screen.findByRole('heading', { name: 'Benchy' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'All models' })).toBeNull();
+    // Not an empty one either. A nameless h1 is still a heading landmark, and a
+    // screen reader announces it as "heading level 1" with nothing after it.
+    expect(screen.queryAllByRole('heading', { level: 1 })).toEqual([]);
 
     // And it appears the moment the store answers.
     library.collections = [
