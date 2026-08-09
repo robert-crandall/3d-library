@@ -223,6 +223,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/duplicates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Files stored more than once
+         * @description Groups of files with identical contents, with how much deleting all but one copy of each would free, plus the state of the scan that found them.
+         */
+        get: operations["list-duplicates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/duplicates/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan for duplicate files
+         * @description Hashes every file whose size is shared with another file and stores the result, so later scans skip it. Returns as soon as the scan starts; poll the duplicates list for progress. Scanning while a scan is already running does nothing.
+         */
+        post: operations["scan-duplicates"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library/counts": {
         parameters: {
             query?: never;
@@ -979,6 +1019,32 @@ export interface components {
              */
             versions: number;
         };
+        DuplicateFile: {
+            /** Format: int64 */
+            fileId: number;
+            filename: string;
+            /** Format: int64 */
+            modelId: number;
+            modelName: string;
+        };
+        DuplicateGroup: {
+            files: components["schemas"]["DuplicateFile"][] | null;
+            hash: string;
+            /** Format: int64 */
+            reclaimable: number;
+            /** Format: int64 */
+            size: number;
+        };
+        Duplicates: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/Duplicates.json
+             */
+            readonly $schema?: string;
+            groups: components["schemas"]["DuplicateGroup"][] | null;
+            status: components["schemas"]["ScanStatus"];
+        };
         ErrorDetail: {
             /** @description Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
             location?: string;
@@ -1242,6 +1308,24 @@ export interface components {
             name?: string;
             /** @description Password (8-72 chars) */
             password: string;
+        };
+        ScanStatus: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ScanStatus.json
+             */
+            readonly $schema?: string;
+            error?: string;
+            /** Format: int64 */
+            hashed: number;
+            /** Format: int64 */
+            pending: number;
+            running: boolean;
+            /** Format: date-time */
+            scannedAt?: string;
+            /** Format: int64 */
+            total: number;
         };
         SetParentInputBody: {
             /**
@@ -2091,6 +2175,82 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-duplicates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Duplicates"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "scan-duplicates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanStatus"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -23,6 +23,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -84,6 +85,11 @@ type Service struct {
 	// slop for the multipart framing, not a multiple of it: one request carries
 	// one file.
 	maxBodyBytes int64
+
+	// The duplicate scan's in-flight state, one entry per user. A mutex and a
+	// map are the whole concurrency model for it - see duplicates.go.
+	scanMu sync.Mutex
+	scans  map[int64]*scanState
 }
 
 // Options configures a Service. Every field except Dir is optional; a zero
@@ -137,6 +143,7 @@ func NewService(pool *pgxpool.Pool, opts Options) (*Service, error) {
 		maxFileBytes: perFile,
 		maxFiles:     count,
 		maxBodyBytes: maxBodyBytes(perFile),
+		scans:        make(map[int64]*scanState),
 	}, nil
 }
 
@@ -1264,20 +1271,56 @@ func (s *Service) DeleteModel(ctx context.Context, userID, id int64) error {
 // with no files left is a legal state: it is what makes a half-finished upload
 // repairable without deleting the whole entry.
 func (s *Service) DeleteFile(ctx context.Context, userID, modelID, fileID int64) error {
-	// One statement, no transaction: a single DELETE is already atomic, and the
-	// join is what enforces ownership, so another user's file is not found
-	// rather than forbidden.
+	// A transaction, and the order of the two statements is the point.
+	//
+	// This used to be one DELETE with no transaction, which looked atomic and
+	// was - but it took its locks in the wrong order. Deleting the file row
+	// locks the file first, and then thumbnail_file_id's ON DELETE SET NULL
+	// fires and locks the model. That is file-then-model, where DeleteModel,
+	// BulkDelete and every path through lockModels is model-then-file, so the
+	// two could close a cycle and one of them died with a serialization
+	// failure. It only bit when the deleted file was actually pinned as a
+	// model's thumbnail, because the referential action only locks model rows
+	// that really reference it - which is exactly the case a duplicates screen
+	// full of delete buttons makes routine.
+	//
+	// Taking the model's lock first costs one extra statement and makes this
+	// path agree with all the others.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("library: begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// The ownership check and the lock in one statement, as DeleteModel does.
+	// A model belonging to somebody else is not found rather than forbidden.
+	var owned int64
+	err = tx.QueryRow(ctx,
+		`SELECT id FROM models WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+		modelID, userID).Scan(&owned)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("library: check model: %w", err)
+	}
+
 	var key string
-	err := s.db.QueryRow(ctx,
-		`DELETE FROM model_files f USING models m
-		  WHERE f.id = $1 AND f.model_id = $2 AND m.id = f.model_id AND m.user_id = $3
-		RETURNING f.storage_key`,
-		fileID, modelID, userID).Scan(&key)
+	err = tx.QueryRow(ctx,
+		`DELETE FROM model_files WHERE id = $1 AND model_id = $2 RETURNING storage_key`,
+		fileID, modelID).Scan(&key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return fmt.Errorf("library: delete file: %w", err)
+	}
+
+	// Blob after the commit is acknowledged, for the reason DeleteModel gives:
+	// a commit error is ambiguous, so unlinking on that path could delete the
+	// blob of a row that survived.
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("library: commit: %w", err)
 	}
 
 	s.removeBlobs(ctx, []string{key})

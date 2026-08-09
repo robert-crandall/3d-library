@@ -155,6 +155,23 @@ describe('LibrarySidebar', () => {
     library.reset();
   });
 
+  // The duplicate finder is a maintenance tool, not another way to filter the
+  // library, so it lives in the footer beside Settings rather than in the
+  // filter nav above. A weaker test would only check the link exists and would
+  // miss aria-current, which is the only thing telling a screen reader which of
+  // the footer links is the page you are on.
+  it('links to the duplicate finder and marks it current when it is showing', () => {
+    nav.url = new URL('http://localhost/duplicates');
+    fill();
+    render(LibrarySidebar);
+
+    const link = screen.getByRole('link', { name: 'Duplicates' });
+    expect(link.getAttribute('href')).toBe('/duplicates');
+    expect(link.getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('aria-current')).toBeNull();
+    nav.url = new URL('http://localhost/');
+  });
+
   // Settings renders the same failure over the lists it makes wrong, and the
   // sidebar is on screen beside it. A weaker test would not notice the two
   // announcements and the two identical Try again buttons.
