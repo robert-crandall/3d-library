@@ -780,7 +780,7 @@ func (s *Service) List(ctx context.Context, userID int64, f Filter) (Page, error
 		  WHERE `+where+`
 		  GROUP BY m.id
 		  ORDER BY `+order+
-		fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
+			fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args)), args...)
 	if err != nil {
 		return Page{}, fmt.Errorf("library: list: %w", err)
 	}
