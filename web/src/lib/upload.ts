@@ -17,6 +17,10 @@ export type ModelDetail =
 /** One file inside a model. */
 export type ModelFile = ModelDetail['files'][number];
 
+/** One model in a version family: the root and every version of it, including
+ *  the model the detail response belongs to. */
+export type FamilyMember = ModelDetail['family'][number];
+
 
 /** Mirrors the server's caps in `internal/library`. Duplicated rather than
  *  derived: the server is the guard, this is only so the UI can say no before

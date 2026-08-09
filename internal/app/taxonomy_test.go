@@ -742,13 +742,8 @@ func TestCountsAndFiltersIgnoreChildModels(t *testing.T) {
 		}
 	}
 
-	// Milestone 9 owns the endpoint that does this; until then the column is
-	// only reachable from SQL, which is also the honest way to set up a state
-	// this app's own API cannot yet produce.
-	if _, err := pool.Exec(t.Context(),
-		"UPDATE models SET parent_id = $1 WHERE id = $2", parent.ID, child.ID); err != nil {
-		t.Fatalf("nest: %v", err)
-	}
+	// Through the real endpoint now that milestone 9 has built it.
+	mustAttach(t, c, child.ID, &parent.ID)
 
 	counts := decodeCounts(t, mustGet(t, c, "/api/library/counts"))
 	if counts.Models != 1 || counts.Uncategorized != 0 {

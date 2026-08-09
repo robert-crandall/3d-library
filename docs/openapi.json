@@ -413,6 +413,37 @@
         },
         "type": "object"
       },
+      "FamilyMember": {
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "fileCount": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "fileCount",
+          "createdAt"
+        ],
+        "type": "object"
+      },
       "File": {
         "additionalProperties": false,
         "properties": {
@@ -651,6 +682,12 @@
           "description": {
             "type": "string"
           },
+          "family": {
+            "items": {
+              "$ref": "#/components/schemas/FamilyMember"
+            },
+            "type": "array"
+          },
           "fileCount": {
             "format": "int64",
             "type": "integer"
@@ -673,6 +710,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "parentId": {
+            "format": "int64",
+            "type": "integer"
           },
           "printTips": {
             "type": "string"
@@ -710,7 +751,8 @@
           "files",
           "thumbnailAutomatic",
           "tags",
-          "materials"
+          "materials",
+          "family"
         ],
         "type": "object"
       },
@@ -904,6 +946,32 @@
         "required": [
           "email",
           "password"
+        ],
+        "type": "object"
+      },
+      "SetParentInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/SetParentInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "parentId": {
+            "description": "The model this becomes a version of, or null to detach it",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "parentId"
         ],
         "type": "object"
       },
@@ -3051,6 +3119,90 @@
           }
         ],
         "summary": "Get a file's thumbnail",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/models/{id}/parent": {
+      "put": {
+        "description": "Makes this model a version of the given model, or detaches it and returns it to the library when parentId is null. Versions are one level deep: a model that has versions of its own cannot become one.",
+        "operationId": "set-model-parent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetParentInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Make a model a version of another",
         "tags": [
           "library"
         ]

@@ -16,7 +16,17 @@ const model = {
   thumbnailAutomatic: true,
   files: [],
   tags: [],
-  materials: []
+  materials: [],
+  // A model that is nobody's version and has none: its family is just itself.
+  family: [
+    {
+      id: 7,
+      name: 'Filament Dry Box',
+      description: 'Holds four spools.',
+      fileCount: 1,
+      createdAt: '2026-03-12T09:00:00Z'
+    }
+  ]
 };
 
 function open(overrides: Record<string, unknown> = {}) {

@@ -213,6 +213,36 @@ type ModelDetail struct {
 	// Tags and Materials are always non-nil, for the same reason Files is.
 	Tags      []Label `json:"tags" nullable:"false"`
 	Materials []Label `json:"materials" nullable:"false"`
+
+	// ParentID is set when this model is a version of another. It is also how a
+	// client finds the family's root without a per-entry flag: the root's id is
+	// ParentID if there is one, and this model's own id otherwise.
+	ParentID *int64 `json:"parentId,omitempty"`
+
+	// Family is every model in this version group - the root, then its versions
+	// newest first - and it always contains at least this model. Named for what
+	// it holds: the epic calls only the children versions, so a "versions" field
+	// containing the root would contradict the word everywhere else.
+	//
+	// Always non-nil, for the same reason Files is. A lone model sends a
+	// one-entry family rather than an empty one; the panel is what decides not
+	// to draw itself, from a length the response did not have to lie about.
+	Family []FamilyMember `json:"family" nullable:"false"`
+}
+
+// FamilyMember is one entry in a model's version panel.
+//
+// Name and Description are the label and the note the panel shows: a version is
+// a whole model, so it already has both, and a version_label column would be a
+// second name for the same row. FileCount is here because deleting a root takes
+// the whole family with it and the confirmation has to say how many files that
+// is.
+type FamilyMember struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	FileCount   int       `json:"fileCount"`
+	CreatedAt   time.Time `json:"createdAt"`
 }
 
 // File is one uploaded file belonging to a model.
@@ -334,6 +364,15 @@ func (s *Service) Create(ctx context.Context, userID int64, name string, parts *
 	// describes the schema, not what Go encodes a nil slice as.
 	m.Tags = []Label{}
 	m.Materials = []Label{}
+	// And its family is itself: `family` is non-nil in the contract too, and a
+	// model that was created a moment ago is nobody's version and has none.
+	m.Family = []FamilyMember{{
+		ID:          m.ID,
+		Name:        m.Name,
+		Description: m.Description,
+		FileCount:   1,
+		CreatedAt:   m.CreatedAt,
+	}}
 	// Nothing can be pinned yet - the model was created a few lines ago - so
 	// this is the automatic rule over exactly one file.
 	resolveThumbnail(&m, nil)
@@ -874,10 +913,10 @@ func (s *Service) Get(ctx context.Context, userID, id int64) (ModelDetail, error
 	var m ModelDetail
 	var pinned, categoryID *int64
 	err := s.db.QueryRow(ctx,
-		`SELECT id, name, created_at, description, print_tips, source_url, thumbnail_file_id, category_id
+		`SELECT id, name, created_at, description, print_tips, source_url, thumbnail_file_id, category_id, parent_id
 		   FROM models WHERE id = $1 AND user_id = $2`,
 		id, userID,
-	).Scan(&m.ID, &m.Name, &m.CreatedAt, &m.Description, &m.PrintTips, &m.SourceURL, &pinned, &categoryID)
+	).Scan(&m.ID, &m.Name, &m.CreatedAt, &m.Description, &m.PrintTips, &m.SourceURL, &pinned, &categoryID, &m.ParentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ModelDetail{}, ErrNotFound
 	}
@@ -894,8 +933,53 @@ func (s *Service) Get(ctx context.Context, userID, id int64) (ModelDetail, error
 	if err := s.loadLabels(ctx, userID, &m); err != nil {
 		return ModelDetail{}, err
 	}
+	if err := s.loadFamily(ctx, userID, &m); err != nil {
+		return ModelDetail{}, err
+	}
 	resolveThumbnail(&m, pinned)
 	return m, nil
+}
+
+// loadFamily fills in Family: the root of this model's version group, then the
+// group's versions newest first.
+//
+// Root first is the design's panel, where the root is the entry with the dot and
+// the versions are indented beneath it. Ordering by parent_id NULLS FIRST is what
+// puts it there, and created_at DESC orders the versions among themselves.
+//
+// One level of nesting is what makes a single query enough: a model's group is
+// the root plus everything pointing at it, and no recursion is possible because
+// the database refuses a grandchild.
+func (s *Service) loadFamily(ctx context.Context, userID int64, m *ModelDetail) error {
+	root := m.ID
+	if m.ParentID != nil {
+		root = *m.ParentID
+	}
+	rows, err := s.db.Query(ctx,
+		`SELECT m.id, m.name, m.description, m.created_at, count(f.id)
+		   FROM models m
+		   LEFT JOIN model_files f ON f.model_id = m.id
+		  WHERE (m.id = $1 OR m.parent_id = $1) AND m.user_id = $2
+		  GROUP BY m.id, m.name, m.description, m.created_at, m.parent_id
+		  ORDER BY m.parent_id NULLS FIRST, m.created_at DESC, m.id DESC`,
+		root, userID)
+	if err != nil {
+		return fmt.Errorf("library: get family: %w", err)
+	}
+	defer rows.Close()
+
+	m.Family = []FamilyMember{}
+	for rows.Next() {
+		var member FamilyMember
+		if err := rows.Scan(&member.ID, &member.Name, &member.Description, &member.CreatedAt, &member.FileCount); err != nil {
+			return fmt.Errorf("library: get family: %w", err)
+		}
+		m.Family = append(m.Family, member)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("library: get family: %w", err)
+	}
+	return nil
 }
 
 // loadFiles fills in Files and the two derived totals. Files is set to an empty
@@ -1038,12 +1122,17 @@ func validSourceURL(raw string) error {
 	return nil
 }
 
-// DeleteModel removes a model, its file rows, and then its blobs.
+// DeleteModel removes a model, its versions, all of their file rows, and then
+// their blobs.
 //
 // Rows before blobs, and every row in one transaction: the worst outcome of a
 // crash in the middle is a blob nobody references, which costs disk, and never
 // a row pointing at a file that is not there, which is the failure the library
 // exists to prevent.
+//
+// Deleting a parent takes its versions with it. models.parent_id cascades, so
+// the versions' rows go whether this function collects them or not; collecting
+// them is how their storage keys are learnt.
 func (s *Service) DeleteModel(ctx context.Context, userID, id int64) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -1068,17 +1157,46 @@ func (s *Service) DeleteModel(ctx context.Context, userID, id int64) error {
 		return fmt.Errorf("library: check model: %w", err)
 	}
 
+	// The versions, in a *second* statement, and the order is load-bearing.
+	// Folding this into the query above as `OR parent_id = $1` reintroduces the
+	// bug it is here to fix: that statement's snapshot is taken before it waits
+	// for the parent's lock, so an attach committing while it waits produces a
+	// version the statement never sees, never locks, and never returns a key
+	// for - and the cascade below then deletes its rows and strands its blobs.
+	// Measured against real Postgres: one statement returned only the parent,
+	// two returned both. Locking the parent first is what closes it - an attach
+	// needs FOR KEY SHARE on the row it is attaching to, which conflicts with
+	// this FOR UPDATE, so no attach can commit between the two reads, and this
+	// second read gets a fresh snapshot that includes any that committed before.
+	//
+	// No user_id predicate: parent_id already scopes these rows to this family,
+	// and a version somehow belonging to another user would be cascaded away by
+	// Postgres regardless, so filtering it out here would orphan its blobs.
+	// Attach refuses to cross owners; this does not depend on that holding.
+	ids := []int64{id}
+	versions, err := tx.Query(ctx, `SELECT id FROM models WHERE parent_id = $1 FOR UPDATE`, id)
+	if err != nil {
+		return fmt.Errorf("library: check versions: %w", err)
+	}
+	for versions.Next() {
+		var versionID int64
+		if err := versions.Scan(&versionID); err != nil {
+			versions.Close()
+			return fmt.Errorf("library: check versions: %w", err)
+		}
+		ids = append(ids, versionID)
+	}
+	versions.Close()
+	if err := versions.Err(); err != nil {
+		return fmt.Errorf("library: check versions: %w", err)
+	}
+
 	// Files are deleted explicitly rather than left to ON DELETE CASCADE,
 	// because RETURNING is how the storage keys are learnt. The cascade stays
-	// as the backstop it already was.
-	//
-	// Assumption, load-bearing and true only until versions exist: a model has
-	// no children. models.parent_id cascades, so once M9 can create a version,
-	// deleting its parent will drop the version's rows here and leave its blobs
-	// on disk. Whoever builds nesting has to widen this to the subtree - and
-	// widen the FOR UPDATE above with it, since the lock covers this row only.
+	// as the backstop it already was. Still files before models, so
+	// thumbnail_file_id's ON DELETE SET NULL fires while the models are there.
 	rows, err := tx.Query(ctx,
-		`DELETE FROM model_files WHERE model_id = $1 RETURNING storage_key`, id)
+		`DELETE FROM model_files WHERE model_id = ANY($1) RETURNING storage_key`, ids)
 	if err != nil {
 		return fmt.Errorf("library: delete files: %w", err)
 	}
@@ -1096,6 +1214,9 @@ func (s *Service) DeleteModel(ctx context.Context, userID, id int64) error {
 		return fmt.Errorf("library: delete files: %w", err)
 	}
 
+	// Only the parent: ON DELETE CASCADE takes the versions, whose file rows
+	// are already gone. model_tags and model_materials hold no blobs and cascade
+	// from models, so they need nothing here even now that a delete fans out.
 	if _, err := tx.Exec(ctx, `DELETE FROM models WHERE id = $1`, id); err != nil {
 		return fmt.Errorf("library: delete model: %w", err)
 	}
@@ -1262,6 +1383,66 @@ func (s *Service) SetThumbnail(ctx context.Context, userID, modelID int64, fileI
 	}
 
 	return s.Get(ctx, userID, modelID)
+}
+
+// SetParent makes a model a version of another, or detaches it when parentID is
+// nil. Both directions are one write, because both are the same instruction:
+// this model's parent is now that, or nothing.
+//
+// The checks below are what produce a sentence a person can act on. They are not
+// what makes the rule true - the database refuses a grandchild, a self-parent,
+// and a parent-with-versions gaining a parent of its own, and it does that while
+// holding the locks these reads do not. So a check that loses a race falls
+// through to the constraint and the caller gets a blunter sentence instead of a
+// wrong answer.
+func (s *Service) SetParent(ctx context.Context, userID, modelID int64, parentID *int64) error {
+	if parentID != nil && *parentID == modelID {
+		return fmt.Errorf("%w: a model cannot be a version of itself", errInvalid)
+	}
+
+	if parentID != nil {
+		// Both rows in one query, so a missing model and a missing parent are
+		// one round trip and one 404. hasVersions is only meaningful for the
+		// model being moved: a parent that already has versions is exactly the
+		// case this feature is for.
+		var modelHasVersions, parentIsVersion bool
+		err := s.db.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM models WHERE parent_id = m.id),
+			        p.parent_id IS NOT NULL
+			   FROM models m JOIN models p ON p.id = $3 AND p.user_id = $2
+			  WHERE m.id = $1 AND m.user_id = $2`,
+			modelID, userID, *parentID).Scan(&modelHasVersions, &parentIsVersion)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("library: set parent: %w", err)
+		}
+		if modelHasVersions {
+			return fmt.Errorf("%w: that model has versions of its own, so it cannot become a version", errInvalid)
+		}
+		if parentIsVersion {
+			return fmt.Errorf("%w: that model is already a version of another model", errInvalid)
+		}
+	}
+
+	tag, err := s.db.Exec(ctx,
+		`UPDATE models SET parent_id = $3 WHERE id = $1 AND user_id = $2`,
+		modelID, userID, parentID)
+	// 23503 is the foreign key refusing what the checks above did not catch -
+	// one sentence for all of them rather than a re-query to work out which,
+	// because getting here at all means two writes overlapped.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		return fmt.Errorf("%w: versions are one level deep, so that model cannot be a version of this one", errInvalid)
+	}
+	if err != nil {
+		return fmt.Errorf("library: set parent: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ignored: the rows are already gone, so the only cost is disk that nothing

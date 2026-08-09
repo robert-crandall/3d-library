@@ -32,6 +32,7 @@ func Register(api huma.API, svc *Service, currentUser CurrentUserFunc) {
 	registerDownload(api, svc, currentUser)
 	registerThumbnail(api, svc, currentUser)
 	registerSetThumbnail(api, svc, currentUser)
+	registerSetParent(api, svc, currentUser)
 	registerTaxonomy(api, svc, currentUser)
 }
 
@@ -653,6 +654,59 @@ func registerSetThumbnail(api huma.API, svc *Service, currentUser CurrentUserFun
 			return nil, uploadError(err)
 		}
 		return &modelOutput{Body: model}, nil
+	})
+}
+
+// setParentInput is the attach/detach request. ParentID is a pointer so null is
+// expressible - null means detach - and `required:"true"` is what keeps null
+// distinct from absent: without it `{}` would parse as a detach and quietly
+// unmake a version nobody asked to unmake.
+type setParentInput struct {
+	ID   int64 `path:"id"`
+	Body struct {
+		ParentID *int64 `json:"parentId" required:"true" doc:"The model this becomes a version of, or null to detach it"`
+	}
+}
+
+// registerSetParent makes a model a version of another, or detaches it.
+//
+// On the child rather than on the parent, because it replaces one relationship
+// that the child owns: `POST /models/{id}/versions` would read as creating a
+// version and would still need a second route to undo it.
+//
+// 204 rather than the moved model, because both flows are driven from the
+// parent's page - attaching from its header and detaching from its panel both
+// move a model that is not the one on screen. Returning that model's detail
+// would tempt the page into rendering the wrong model under its own URL.
+func registerSetParent(api huma.API, svc *Service, currentUser CurrentUserFunc) {
+	huma.Register(api, huma.Operation{
+		OperationID: "set-model-parent",
+		Summary:     "Make a model a version of another",
+		Description: "Makes this model a version of the given model, or detaches it " +
+			"and returns it to the library when parentId is null. Versions are one " +
+			"level deep: a model that has versions of its own cannot become one.",
+		Method:        http.MethodPut,
+		Path:          "/api/models/{id}/parent",
+		Tags:          []string{"library"},
+		DefaultStatus: http.StatusNoContent,
+		Errors:        []int{http.StatusUnauthorized, http.StatusNotFound, http.StatusUnprocessableEntity},
+		Security:      apisec.User(api),
+	}, func(ctx context.Context, in *setParentInput) (*struct{}, error) {
+		userID, err := currentUser(ctx)
+		if err != nil {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		err = svc.SetParent(ctx, userID, in.ID, in.Body.ParentID)
+		if errors.Is(err, ErrNotFound) {
+			return nil, huma.Error404NotFound("model not found")
+		}
+		if errors.Is(err, errInvalid) {
+			return nil, huma.Error422UnprocessableEntity(err.Error())
+		}
+		if err != nil {
+			return nil, internalError("could not move the model", err)
+		}
+		return nil, nil
 	})
 }
 
