@@ -10,6 +10,8 @@ vi.mock('$lib/api/client', () => ({ api: { GET: (...args: unknown[]) => get(...a
 // setting the URL rather than by poking at component state. `nav` is reactive,
 // so assigning to it mid-test is a navigation the page notices.
 vi.mock('$app/state', async () => ({ page: (await import('$lib/testing/nav.svelte')).nav }));
+const goto = vi.fn((..._args: unknown[]) => Promise.resolve());
+vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => goto(...args) }));
 
 const model = {
   id: 1,
@@ -18,6 +20,29 @@ const model = {
   totalSize: 1024 * 1024 * 12,
   createdAt: '2026-01-01T00:00:00Z'
 };
+
+/** A list response. The endpoint returns an envelope rather than a bare array,
+ *  because the count line and the pager need the total and the page served. */
+function listed(
+  models: unknown[] = [],
+  extra: { total?: number; page?: number; pageSize?: number } = {}
+) {
+  return {
+    data: {
+      items: models,
+      total: extra.total ?? models.length,
+      page: extra.page ?? 1,
+      pageSize: extra.pageSize ?? 24
+    }
+  };
+}
+
+/** Answers the model list with an envelope and everything else - the taxonomy
+ *  the shared store reads - with a bare list. */
+function answers(models: unknown[] = [], extra?: { total?: number; page?: number }) {
+  return (path: unknown) =>
+    Promise.resolve(String(path).startsWith('/api/models') ? listed(models, extra) : { data: [] });
+}
 
 // No shared reset: every test sets its own implementation, and a top-level
 // beforeEach that resets the mock makes vitest report the deliberately-rejected
@@ -36,7 +61,7 @@ describe('library page', () => {
   });
 
   it('renders a tile per model with its name, file count and size', async () => {
-    get.mockResolvedValue({ data: [model, { ...model, id: 2, name: 'Gridfinity', fileCount: 1 }] });
+    get.mockImplementation(answers([model, { ...model, id: 2, name: 'Gridfinity', fileCount: 1 }]));
     render(LibraryPage);
 
     expect(await screen.findByRole('heading', { name: 'Benchy' })).toBeTruthy();
@@ -53,7 +78,7 @@ describe('library page', () => {
   // The first screen a new user sees. A blank area under the header would read
   // as a failed load, so the empty state has to say something.
   it('shows an empty state instead of a blank grid', async () => {
-    get.mockResolvedValue({ data: [] });
+    get.mockImplementation(answers([]));
     render(LibraryPage);
 
     expect(await screen.findByText('Nothing here yet')).toBeTruthy();
@@ -95,7 +120,7 @@ describe('library page', () => {
       true
     );
 
-    finishLoad({ data: [model] });
+    finishLoad(listed([model]));
     await screen.findByRole('heading', { name: 'Benchy' });
     expect((screen.getByRole('button', { name: 'Upload' }) as HTMLButtonElement).disabled).toBe(
       false
@@ -118,7 +143,7 @@ describe('library page', () => {
   // library. Otherwise Upload is available again with the question still open,
   // and the answer the user guesses at is a second copy.
   it('re-reads the library when an upload could not be confirmed', async () => {
-    get.mockResolvedValue({ data: [] });
+    get.mockImplementation(answers([]));
     vi.stubGlobal(
       'fetch',
       vi.fn(() => Promise.reject(new TypeError('Failed to fetch')))
@@ -146,7 +171,7 @@ describe('library page', () => {
   // there is a window, right after asking for the reload, where the user can
   // upload the same model a second time.
   it('does not offer Upload while the confirming reload is in flight', async () => {
-    get.mockResolvedValue({ data: [] });
+    get.mockImplementation(answers([]));
     vi.stubGlobal(
       'fetch',
       vi.fn(() => Promise.reject(new TypeError('Failed to fetch')))
@@ -175,7 +200,7 @@ describe('library page', () => {
       true
     );
 
-    finishReload({ data: [] });
+    finishReload(listed());
     await waitFor(() =>
       expect((screen.getByRole('button', { name: 'Upload' }) as HTMLButtonElement).disabled).toBe(
         false
@@ -185,7 +210,7 @@ describe('library page', () => {
   });
 
   it('opens the upload dialog from the header button', async () => {
-    get.mockResolvedValue({ data: [model] });
+    get.mockImplementation(answers([model]));
     render(LibraryPage);
     await screen.findByRole('heading', { name: 'Benchy' });
 
@@ -202,9 +227,9 @@ describe('library page', () => {
     let uploaded = false;
     get.mockImplementation((path: string) => {
       if (!String(path).startsWith('/api/models')) return Promise.resolve({ data: [] });
-      return Promise.resolve({
-        data: uploaded ? [{ id: 9, name: 'Cable clip', fileCount: 1, totalSize: 2048 }] : []
-      });
+      return Promise.resolve(
+        listed(uploaded ? [{ id: 9, name: 'Cable clip', fileCount: 1, totalSize: 2048 }] : [])
+      );
     });
     const fetch = vi.fn(async (url: string, init?: RequestInit) => {
       if (!init) {
@@ -243,7 +268,7 @@ describe('library page filtering', () => {
 
   it('asks the server for exactly the filter in the URL', async () => {
     nav.url = new URL('http://localhost/?categoryId=3&tagId=8');
-    get.mockResolvedValue({ data: [] });
+    get.mockImplementation(answers([]));
     render(LibraryPage);
 
     await waitFor(() => expect(get).toHaveBeenCalledWith('/api/models?categoryId=3&tagId=8'));
@@ -254,7 +279,7 @@ describe('library page filtering', () => {
   // this filter would not show.
   it('separates an empty filter from an empty library', async () => {
     nav.url = new URL('http://localhost/?uncategorized=true');
-    get.mockResolvedValue({ data: [] });
+    get.mockImplementation(answers([]));
     render(LibraryPage);
 
     expect(await screen.findByText('Nothing matches this filter')).toBeTruthy();
@@ -267,7 +292,7 @@ describe('library page filtering', () => {
   // collection.
   it('names the active filter and offers a way out of it', async () => {
     nav.url = new URL('http://localhost/?uncategorized=true');
-    get.mockResolvedValue({ data: [model] });
+    get.mockImplementation(answers([model]));
     render(LibraryPage);
 
     expect(await screen.findByRole('heading', { name: 'Uncategorized' })).toBeTruthy();
@@ -292,10 +317,10 @@ describe('library page filtering', () => {
     nav.url = new URL('http://localhost/?categoryId=4');
     await waitFor(() => expect(pending['/api/models?categoryId=4']).toBeTruthy());
 
-    pending['/api/models?categoryId=4']({ data: [{ ...model, id: 2, name: 'Toys model' }] });
+    pending['/api/models?categoryId=4'](listed([{ ...model, id: 2, name: 'Toys model' }]));
     expect(await screen.findByRole('heading', { name: 'Toys model' })).toBeTruthy();
 
-    pending['/api/models?categoryId=3']({ data: [{ ...model, name: 'Functional model' }] });
+    pending['/api/models?categoryId=3'](listed([{ ...model, name: 'Functional model' }]));
     // One turn of the event loop is all the stale reply needs to overwrite the
     // grid, so wait for it rather than asserting straight away.
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -305,10 +330,219 @@ describe('library page filtering', () => {
   });
 
   it('offers no way out when nothing is filtered', async () => {
-    get.mockResolvedValue({ data: [model] });
+    get.mockImplementation(answers([model]));
     render(LibraryPage);
 
     expect(await screen.findByRole('heading', { name: 'All models' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Clear filter' })).toBeNull();
+  });
+});
+
+// Search, sort and paging are the same mechanism as filtering - a URL the page
+// reads - so what is worth testing is the part that is not: the count line and
+// the pager come from the response, and the response is allowed to disagree
+// with the URL.
+describe('library page, searching and paging', () => {
+  beforeEach(() => {
+    nav.url = new URL('http://localhost/');
+    goto.mockClear();
+    // Only the recorded calls, not the implementation: every test here sets its
+    // own answer first thing, and clearing the implementation would leave a
+    // pending promise from the previous test unhandled.
+    get.mockClear();
+  });
+
+  it('asks for exactly what the URL says', async () => {
+    get.mockImplementation(answers([model]));
+    nav.url = new URL('http://localhost/?q=bin&sort=name&page=2&categoryId=3');
+    render(LibraryPage);
+
+    await waitFor(() => expect(modelReads()).toBe(1));
+    expect(get.mock.calls.at(-1)?.[0]).toBe('/api/models?categoryId=3&q=bin&sort=name&page=2');
+  });
+
+  // The count is of matches, not of tiles: a full first page of a 60-model
+  // search and a full page of the whole library look identical without it.
+  it('counts the matches and says which page of how many', async () => {
+    get.mockImplementation(answers(Array.from({ length: 24 }, (_, i) => ({ ...model, id: i + 1 })), { total: 60, page: 2 }));
+    nav.url = new URL('http://localhost/?page=2');
+    render(LibraryPage);
+
+    expect(await screen.findByText('60 models · page 2 of 3')).toBeTruthy();
+  });
+
+  // One page is the common case and "page 1 of 1" is noise, and one model is
+  // not "1 models".
+  it('says neither a page number nor a plural it does not need', async () => {
+    get.mockImplementation(answers([model]));
+    render(LibraryPage);
+
+    expect(await screen.findByText('1 model')).toBeTruthy();
+    expect(screen.queryByLabelText('Pagination')).toBeNull();
+  });
+
+  // Page 1 of 0 is what ceil(0/24) gives you, and it is on screen the moment a
+  // search matches nothing.
+  it('does not offer a page count of zero when nothing matches', async () => {
+    get.mockImplementation(answers([], { total: 0 }));
+    nav.url = new URL('http://localhost/?q=nothing');
+    render(LibraryPage);
+
+    expect(await screen.findByText('0 models')).toBeTruthy();
+  });
+
+  // Naming the term matters after a debounce, when the box may already hold
+  // something else, and the way out keeps the filter you were searching inside
+  // rather than dumping you at the whole library.
+  it('names the term when a search matches nothing, and clears only the search', async () => {
+    get.mockImplementation(answers([], { total: 0 }));
+    nav.url = new URL('http://localhost/?q=bin&categoryId=3&sort=name&page=2');
+    render(LibraryPage);
+
+    expect(await screen.findByRole('heading', { name: 'No models match “bin”' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Clear search' }).getAttribute('href')).toBe(
+      '/?categoryId=3&sort=name'
+    );
+    // Not the filter's empty state, and certainly not the empty library's.
+    expect(screen.queryByText('Nothing matches this filter')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Upload your first model' })).toBeNull();
+  });
+
+  // An empty filter is still not an empty search, so the earlier state must not
+  // swallow this one. The way out of it drops the filter and nothing else: a
+  // hardcoded "/" here would quietly reset an ordering the user chose, and this
+  // is the only one of the three exits that is easy to write that way.
+  it('keeps the filter and the library empty states apart from the search one', async () => {
+    get.mockImplementation(answers([], { total: 0 }));
+    nav.url = new URL('http://localhost/?categoryId=3&sort=name');
+    render(LibraryPage);
+
+    expect(await screen.findByText('Nothing matches this filter')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: /No models match/ })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Show all models' }).getAttribute('href')).toBe(
+      '/?sort=name'
+    );
+  });
+
+  it('offers only the direction that exists at each end', async () => {
+    const full = Array.from({ length: 24 }, (_, i) => ({ ...model, id: i + 1 }));
+    get.mockImplementation(answers(full, { total: 60, page: 1 }));
+    render(LibraryPage);
+
+    const nav1 = await screen.findByLabelText('Pagination');
+    expect(within(nav1).queryByRole('link', { name: 'Previous' })).toBeNull();
+    expect(within(nav1).getByRole('link', { name: 'Next' }).getAttribute('href')).toBe('/?page=2');
+
+    get.mockImplementation(answers(full, { total: 60, page: 3 }));
+    nav.url = new URL('http://localhost/?page=3');
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText('Pagination')).queryByRole('link', { name: 'Next' })
+      ).toBeNull()
+    );
+    expect(
+      within(screen.getByLabelText('Pagination'))
+        .getByRole('link', { name: 'Previous' })
+        .getAttribute('href')
+    ).toBe('/?page=2');
+  });
+
+  // The URL can ask for a page that does not exist - a bookmark taken before
+  // models were deleted, or a hand-edited address. The server serves the last
+  // page instead of failing, and the pager has to agree with what is on screen:
+  // built from the URL it would offer 98 and 100 of a two-page library.
+  it('builds the pager from the page the server served, not the one asked for', async () => {
+    get.mockImplementation(
+      answers(Array.from({ length: 12 }, (_, i) => ({ ...model, id: i + 1 })), {
+        total: 36,
+        page: 2
+      })
+    );
+    nav.url = new URL('http://localhost/?page=99&q=bin');
+    render(LibraryPage);
+
+    const pager = await screen.findByLabelText('Pagination');
+    expect(within(pager).getByRole('link', { name: 'Previous' }).getAttribute('href')).toBe(
+      '/?q=bin'
+    );
+    expect(within(pager).queryByRole('link', { name: 'Next' })).toBeNull();
+    expect(screen.getByText('36 models · page 2 of 2')).toBeTruthy();
+  });
+
+  // Paging keeps the search and the ordering, or page 2 of a search is page 2
+  // of the library.
+  it('keeps the search and the ordering in the pager links', async () => {
+    get.mockImplementation(
+      answers(Array.from({ length: 24 }, (_, i) => ({ ...model, id: i + 1 })), {
+        total: 60,
+        page: 2
+      })
+    );
+    nav.url = new URL('http://localhost/?q=bin&sort=name&page=2&tagId=8');
+    render(LibraryPage);
+
+    const pager = await screen.findByLabelText('Pagination');
+    expect(within(pager).getByRole('link', { name: 'Next' }).getAttribute('href')).toBe(
+      '/?tagId=8&q=bin&sort=name&page=3'
+    );
+    expect(within(pager).getByRole('link', { name: 'Previous' }).getAttribute('href')).toBe(
+      '/?tagId=8&q=bin&sort=name'
+    );
+  });
+
+  // The mirror of the stale-success case, and the one that is easy to leave
+  // out: a filter that fails after a later one has already painted must not put
+  // an error over a grid that loaded fine. Nothing on screen would explain it,
+  // and Try again would re-read the filter that worked.
+  it('ignores a stale read that fails after a newer one succeeded', async () => {
+    const pending: Record<string, (value: unknown) => void> = {};
+    const rejects: Record<string, (reason: unknown) => void> = {};
+    get.mockImplementation((path: string) =>
+      String(path).startsWith('/api/models')
+        ? new Promise((resolve, reject) => {
+            pending[String(path)] = resolve;
+            rejects[String(path)] = reject;
+          })
+        : Promise.resolve({ data: [] })
+    );
+
+    nav.url = new URL('http://localhost/?q=old');
+    render(LibraryPage);
+    await waitFor(() => expect(pending['/api/models?q=old']).toBeTruthy());
+
+    nav.url = new URL('http://localhost/?q=new');
+    await waitFor(() => expect(pending['/api/models?q=new']).toBeTruthy());
+    pending['/api/models?q=new'](listed([model]));
+    expect(await screen.findByRole('heading', { name: 'Benchy' })).toBeTruthy();
+
+    rejects['/api/models?q=old'](new TypeError('Failed to fetch'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Benchy' })).toBeTruthy();
+  });
+
+  it('shows the ordering the URL asked for', async () => {
+    get.mockImplementation(answers([model]));
+    nav.url = new URL('http://localhost/?sort=name-desc');
+    render(LibraryPage);
+
+    await screen.findByRole('heading', { name: 'Benchy' });
+    expect((screen.getByLabelText('Sort') as HTMLSelectElement).value).toBe('name-desc');
+  });
+
+  // Re-sorting page 3 of a search and staying on page 3 shows a different
+  // twenty-four models with no relation to what was on screen, so the sort
+  // control returns to the first page.
+  it('goes back to the first page when the ordering changes', async () => {
+    get.mockImplementation(answers([model], { total: 60, page: 3 }));
+    nav.url = new URL('http://localhost/?q=bin&page=3');
+    render(LibraryPage);
+
+    await screen.findByRole('heading', { name: 'Benchy' });
+    await fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'name' } });
+
+    expect(goto).toHaveBeenCalledTimes(1);
+    expect(goto.mock.calls[0][0]).toBe('/?q=bin&sort=name');
   });
 });

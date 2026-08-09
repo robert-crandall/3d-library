@@ -252,7 +252,7 @@ export interface paths {
         };
         /**
          * List models
-         * @description Every model in the caller's library, newest first. The optional filters narrow it and combine with AND.
+         * @description One page of the caller's library, newest first. The optional filters and search narrow it and combine with AND.
          */
         get: operations["list-models"];
         put?: never;
@@ -824,6 +824,31 @@ export interface components {
             thumbnailFileId?: number;
             /** Format: int64 */
             totalSize: number;
+        };
+        ModelsPage: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ModelsPage.json
+             */
+            readonly $schema?: string;
+            /** @description The models on this page */
+            items: components["schemas"]["Model"][];
+            /**
+             * Format: int64
+             * @description The page served, which is the last page if a larger one was asked for
+             */
+            page: number;
+            /**
+             * Format: int64
+             * @description How many models a full page holds
+             */
+            pageSize: number;
+            /**
+             * Format: int64
+             * @description How many models matched, across every page
+             */
+            total: number;
         };
         NameBodyBody: {
             /**
@@ -1791,6 +1816,12 @@ export interface operations {
                 tagId?: number;
                 /** @description Only models with no category */
                 uncategorized?: boolean;
+                /** @description Only models whose name or description contains every word of this */
+                q?: string;
+                /** @description Ordering. Defaults to newest. */
+                sort?: "newest" | "oldest" | "name" | "name-desc";
+                /** @description 1-based page. A page past the end serves the last one. */
+                page?: number;
             };
             header?: never;
             path?: never;
@@ -1804,7 +1835,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Model"][];
+                    "application/json": components["schemas"]["ModelsPage"];
                 };
             };
             /** @description Unauthorized */

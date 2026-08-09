@@ -72,7 +72,8 @@ type Counts struct {
 	Uncategorized int `json:"uncategorized"`
 }
 
-// Filter narrows the library list. A zero Filter is the whole library.
+// Filter narrows the library list. A zero Filter is the whole library's first
+// page, newest first.
 //
 // The fields are ANDed. Uncategorized and CategoryID are mutually exclusive in
 // the UI - the sidebar is a single selection - but the server does not need to
@@ -81,6 +82,14 @@ type Filter struct {
 	CategoryID    *int64
 	TagID         *int64
 	Uncategorized bool
+	// Query is the search term. Empty - or only whitespace - is no search.
+	Query string
+	// Sort is the ordering. The zero value is the empty string, which sorts
+	// as SortNewest, as does any value that is not one of the constants.
+	Sort Sort
+	// Page is 1-based. Zero or negative is page 1, and a page past the end is
+	// clamped to the last one.
+	Page int
 }
 
 // cleanName trims and validates a taxonomy name.
