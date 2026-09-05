@@ -8,7 +8,7 @@
 # stage and that stops being true.
 
 # --- 1. the SPA -------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM oven/bun:1.3-alpine AS web-build
+FROM --platform=$BUILDPLATFORM oven/bun:1.4-alpine AS web-build
 WORKDIR /src/web
 
 # Dependencies first so a source-only edit doesn't reinstall them.
@@ -19,7 +19,7 @@ COPY web/ ./
 RUN bun run build
 
 # --- 2. the binary ----------------------------------------------------------
-FROM --platform=$BUILDPLATFORM golang:1.26 AS go-build
+FROM --platform=$BUILDPLATFORM golang:1.27 AS go-build
 WORKDIR /src
 
 COPY go.mod go.sum ./
