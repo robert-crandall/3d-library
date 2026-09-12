@@ -30,6 +30,6 @@
   "dependencies": {
     "fflate": "^0.8.2",
     "openapi-fetch": "^0.17.0",
-    "three": "^0.185.0"
+    "three": "^0.186.0"
   }
 }
