@@ -1309,6 +1309,11 @@
             "format": "email",
             "type": "string"
           },
+          "invitation": {
+            "description": "Invitation token (requires app support)",
+            "maxLength": 128,
+            "type": "string"
+          },
           "name": {
             "description": "Display name (optional)",
             "maxLength": 100,

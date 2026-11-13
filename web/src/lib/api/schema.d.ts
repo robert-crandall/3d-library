@@ -1304,6 +1304,8 @@ export interface components {
              * @description Email address
              */
             email: string;
+            /** @description Invitation token (requires app support) */
+            invitation?: string;
             /** @description Display name (optional) */
             name?: string;
             /** @description Password (8-72 chars) */
