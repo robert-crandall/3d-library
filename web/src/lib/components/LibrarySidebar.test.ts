@@ -252,7 +252,7 @@ describe('LibrarySidebar', () => {
     expect(goto).toHaveBeenCalledTimes(1);
     // The filter survives, the page does not, and it replaces rather than pushes.
     expect(goto.mock.calls[0][0]).toBe('/?categoryId=3&q=bin');
-    expect(goto.mock.calls[0][1]).toMatchObject({ replaceState: true, keepFocus: true });
+    expect(goto.mock.calls[0][1]).toMatchObject({ replace: true, reset: false });
   });
 
   // The sidebar lives in the layout and does not unmount when you open a model,

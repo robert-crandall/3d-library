@@ -1,9 +1,24 @@
+import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  plugins: [tailwindcss(), sveltekit()],
+  plugins: [
+    tailwindcss(),
+    sveltekit({
+      preprocess: vitePreprocess(),
+      // index.html rather than SvelteKit's suggested 200.html: the Go server
+      // serves the SPA from an embedded FS and looks for index.html at its root
+      // (server.New panics without it). The prerendering conflict SvelteKit warns
+      // about needs a route prerendered to /index.html, and nothing here
+      // prerenders - ssr is off in the root layout and no route opts back in.
+      adapter: adapter({ fallback: 'index.html' }),
+      version: { pollInterval: 0 },
+      alias: { '$lib': 'src/lib' }
+    })
+  ],
   resolve: {
     conditions: ['browser']
   },

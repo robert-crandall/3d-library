@@ -72,7 +72,7 @@ graph TD
 | HTTP | chi + huma (from the foundation) | - |
 | Database | Postgres, one instance | >= 14; CI tests on 18 |
 | Migrations | goose, via `db.Migrate` | - |
-| Frontend | Svelte + SvelteKit, `adapter-static` in SPA mode | 5.x / 2.x / 3.x |
+| Frontend | Svelte + SvelteKit, `adapter-static` in SPA mode | 5.x / 3.x / 3.x |
 | Build tool | Vite | 8.x |
 | Package manager | Bun - no Node required | 1.3.x |
 | Styling | Tailwind CSS, and nothing on top of it | 4.x |
@@ -235,7 +235,7 @@ but don't be surprised by it.
 
 ### D4 - SvelteKit with `adapter-static`, in SPA mode
 
-Svelte 5 (runes) and SvelteKit 2, built by `@sveltejs/adapter-static` with
+Svelte 5 (runes) and SvelteKit 3, built by `@sveltejs/adapter-static` with
 `fallback: 'index.html'` and `export const ssr = false` in the root layout.
 Output goes to `web/build/`, which `web/dist.go` embeds:
 
@@ -375,9 +375,10 @@ CI asserts the runtime directly (D9) rather than inferring it from a green
 build.
 
 **A second silent trap, same shape, different cause: what `svelte-check` looks
-at.** SvelteKit generates `.svelte-kit/tsconfig.json`, while Vitest discovers
-tests from the explicit `src/**/*.test.ts` pattern in `vite.config.ts`. Keeping
-frontend tests under `web/src/` makes both tools see the same source tree.
+at.** SvelteKit generates `.svelte-kit/tsconfig.json` (extended as
+`$app/tsconfig` in `web/tsconfig.json`), while Vitest discovers tests from the
+explicit `src/**/*.test.ts` pattern in `vite.config.ts`. Keeping frontend tests
+under `web/src/` makes both tools see the same source tree.
 
 ### D5 - Tailwind CSS 4, and deliberately nothing on top of it
 
@@ -476,7 +477,7 @@ The entire frontend:
   redirected during a Back or Forward rendered the right page and left the
   address bar on the entry you popped to - the greeting under `/login`, the
   login form under `/` (#18). An `afterNavigate` that compares `page.url` to
-  `location.href` and calls `$app/navigation`'s `replaceState` when they
+  `location.href` and calls shallow `goto` with `replace: true` when they
   disagree puts the bar back. Manual use of the running app covers this
   browser-only behavior.
 
@@ -625,7 +626,7 @@ is a real launch, but "usually" is the honest word and force-quitting is the
 reliable one.
 
 This was implemented and then removed, so the shape of the alternative is known
-rather than guessed. `version.pollInterval` in `web/svelte.config.js` makes
+rather than guessed. `version.pollInterval` in `web/vite.config.ts` makes
 SvelteKit re-fetch `_app/version.json` on a timer and flip `updated.current`;
 an effect in the root layout reloads on that. Two things worth writing down for
 whoever reconsiders:

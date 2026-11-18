@@ -64,12 +64,11 @@
     timer = setTimeout(() => {
       const q = draft.trim();
       if (q === view.q && onLibrary) return;
-      // replaceState because one history entry per pause makes Back walk
+      // replace because one history entry per pause makes Back walk
       // backwards through a half-typed word instead of leaving the search.
       goto(viewHref(withFilter(view, { q })), {
-        replaceState: true,
-        keepFocus: true,
-        noScroll: true
+        replace: true,
+        reset: false
       });
     }, DEBOUNCE_MS);
   }

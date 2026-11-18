@@ -256,7 +256,7 @@
 
   function sorted(event: Event) {
     const next = (event.currentTarget as HTMLSelectElement).value as Sort;
-    goto(viewHref(withFilter(view, { sort: next })), { noScroll: true });
+    goto(viewHref(withFilter(view, { sort: next })), { reset: false });
   }
 
   // Re-read rather than prepend. Prepending is right for an unfiltered library,
