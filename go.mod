@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/danielgtaylor/huma/v2 v2.40.0
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/robert-crandall/go-home-server v0.1.14
 	golang.org/x/image v0.48.0
 )
