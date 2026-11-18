@@ -1114,8 +1114,9 @@ Dependabot covers four ecosystems weekly: `gomod` (`/`), `bun` (`/web`),
 into one PR per ecosystem; majors come as standalone PRs so they're at least
 legible.
 
-There is exactly one exception to "majors auto-merge", and it is `typescript`,
-held below 7 in the `bun` ecosystem. TypeScript 7 is the native rewrite, and it
+There are two exceptions in the `bun` ecosystem (`typescript >=7.0.0` and
+`jsdom >=30.1.0`, which breaks under Bun's `DONT_CONTEXTIFY` VM global proxy).
+For `typescript`, held below 7: TypeScript 7 is the native rewrite, and it
 drops the JS compiler API that this repo's frontend toolchain still calls into.
 `svelte-check` refuses to start under it outright, and `openapi-typescript`
 crashes on `ts.factory` being undefined, which takes `make spec` down with it.
