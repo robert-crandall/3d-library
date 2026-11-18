@@ -38,7 +38,7 @@ export const EMPTY_VIEW: View = {
  * every value is either recognised or replaced with its default here, and the
  * client never forwards garbage the server would then have to reject.
  */
-export function parseView(params: URLSearchParams): View {
+export function parseView(params: Pick<URLSearchParams, 'get'>): View {
   const sort = params.get('sort');
   const page = params.get('page');
   return {
