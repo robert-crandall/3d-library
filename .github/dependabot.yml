@@ -34,16 +34,25 @@ updates:
       bun-minor-patch:
         patterns: ['*']
         update-types: [minor, patch]
-    # The one exception to "majors auto-merge". TypeScript 7 is the native
-    # rewrite and drops the JS compiler API that the frontend toolchain still
-    # calls into: svelte-check 4.7.4 refuses to start under it, and
-    # openapi-typescript 7.13.0 crashes on `ts.factory` being undefined, which
-    # takes out `make spec`. Both are already at their latest release, so
-    # nothing here can be bumped to make TS7 work - the bound holds at the last
-    # TypeScript with the classic API. It covers 8 and later too, on the
-    # assumption those stay native. 6.x minors still flow through the group.
-    # Delete this once both tools ship native-compiler support.
+    # Exceptions to "updates auto-merge":
+    # - jsdom >=30.1.0 switched its WebIDL wrapper storage from symbols to ES
+    #   private fields (#impl). Under Bun 1.3.x, vm.runInContext("this", ctx)
+    #   for a DONT_CONTEXTIFY context returns a proxy distinct from ctx that
+    #   does not share #impl, so JSDOM's window fails before any tests run with
+    #   an invalid EventTarget receiver. Hold at 30.0.1 until Bun fixes private
+    #   fields on DONT_CONTEXTIFY VM globals.
+    # - TypeScript 7 is the native rewrite and drops the JS compiler API that
+    #   the frontend toolchain still calls into: svelte-check 4.7.8 refuses to
+    #   start under it, and openapi-typescript 7.13.0 crashes on `ts.factory`
+    #   being undefined, which takes out `make spec`. Both are already at their
+    #   latest release, so nothing here can be bumped to make TS7 work - the
+    #   bound holds at the last TypeScript with the classic API. It covers 8 and
+    #   later too, on the assumption those stay native. 6.x minors still flow
+    #   through the group. Delete this once both tools ship native-compiler
+    #   support.
     ignore:
+      - dependency-name: jsdom
+        versions: ['>=30.1.0']
       - dependency-name: typescript
         versions: ['>=7.0.0']
 

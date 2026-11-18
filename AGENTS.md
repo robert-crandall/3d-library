@@ -137,9 +137,15 @@ These are the things that waste an hour.
   is what stops `bun run` from honouring vite's `#!/usr/bin/env node` shebang
   and building under Node. Missing, moved, or typo'd, Bun reports no error - it
   just uses Node. CI asserts it explicitly. Do not "tidy" that file.
+- **jsdom is pinned to 30.0.1 in `web/`.** With Bun 1.3.14 and Vitest 5.x,
+  jsdom `>=30.1.0` (including 31.0.0) fails before any tests run with an
+  invalid `EventTarget` receiver because its WebIDL `#impl` private field does
+  not cross Bun's `DONT_CONTEXTIFY` VM global proxy. Dependabot ignores
+  `>=30.1.0`; recheck `bun run test` before advancing the pin, and do not
+  switch to Node.
 - **TypeScript is held below 7 in `web/`.** TS7 drops `ts.factory`, which breaks
   both `svelte-check` and `openapi-typescript` (so it takes out `make spec`).
-  Dependabot ignores `>=7.0.0` and that is the repo's only ignore.
+  Dependabot ignores `>=7.0.0`.
 - **`TEST_DATABASE_URL` unset means the DB-backed test skips**, so a green
   `make test` can mean "it did not run". To actually run it:
   `TEST_DATABASE_URL=postgres://localhost:5432/3d-library_test?sslmode=disable go test ./internal/app/ -run TestAuthRefusalStrings`
